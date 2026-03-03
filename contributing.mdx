@@ -289,7 +289,7 @@ for (let attempt = 0; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 <type>: <description>
 
 [optional body]
@@ -311,7 +311,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/):
 ### Examples
 
 **Feature**:
-```
+```text
 feat: add support for custom field mapping
 
 Allows users to specify additional Jira fields to sync to OmniFocus task notes.
@@ -319,7 +319,7 @@ Configured via the "Custom Fields" setting in the configuration dialog.
 ```
 
 **Bug Fix**:
-```
+```text
 fix: handle empty JQL query gracefully
 
 Previously, an empty JQL query would cause a 400 error from Jira.
@@ -327,7 +327,7 @@ Now displays a user-friendly error message prompting the user to enter a query.
 ```
 
 **Documentation**:
-```
+```text
 docs: update installation instructions for OmniFocus 4
 
 OmniFocus 4 changed the Plug-Ins directory location.
@@ -335,7 +335,7 @@ Updated README with the new path.
 ```
 
 **Refactor**:
-```
+```text
 refactor: extract status mapping logic to jiraCommon
 
 Moves getStatusMappings() to jiraCommon.js to avoid duplication
@@ -346,7 +346,7 @@ between syncJira.js and syncJiraFull.js.
 
 If your commit introduces a breaking change, add `BREAKING CHANGE:` in the footer:
 
-```
+```text
 feat: change settings key format
 
 BREAKING CHANGE: Settings are now stored as JSON instead of individual keys.
