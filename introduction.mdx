@@ -1,0 +1,99 @@
+---
+title: OmniFocus Jira Sync
+description: One-way sync plugin that imports Jira issues into OmniFocus as tasks using JQL queries
+---
+
+# OmniFocus Jira Sync
+
+A one-way sync plugin that imports Jira issues into OmniFocus as tasks using JQL queries. Jira remains your source of truth while OmniFocus becomes your task execution environment.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Get started by installing the plugin in OmniFocus
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure your Jira credentials and sync preferences
+  </Card>
+  <Card title="JQL queries" icon="search" href="/usage/jql-queries">
+    Learn how to filter issues with Jira Query Language
+  </Card>
+  <Card title="Usage guide" icon="sync" href="/usage/sync-modes">
+    Understand incremental and full refresh syncing
+  </Card>
+</CardGroup>
+
+## Key features
+
+This plugin provides powerful sync capabilities while keeping your Jira data secure:
+
+<CardGroup cols={2}>
+  <Card title="JQL-based filtering" icon="filter">
+    Sync only the issues you care about using flexible JQL queries
+  </Card>
+  <Card title="Incremental sync" icon="clock">
+    Fetch only recently updated issues for faster daily syncing
+  </Card>
+  <Card title="Full refresh sync" icon="rotate">
+    Clean up tasks that no longer match your Jira query
+  </Card>
+  <Card title="Secure credentials" icon="lock">
+    Store your API token safely in macOS Keychain
+  </Card>
+  <Card title="Status mapping" icon="check">
+    Automatically map Jira statuses to OmniFocus task states
+  </Card>
+  <Card title="Project organization" icon="folder">
+    Group tasks by Jira parent issues or epics
+  </Card>
+</CardGroup>
+
+## How it works
+
+The plugin creates a one-way sync from Jira to OmniFocus:
+
+<Steps>
+  <Step title="Query Jira">
+    The plugin uses your JQL query to fetch matching issues from your Jira instance
+  </Step>
+  <Step title="Create or update tasks">
+    Each Jira issue becomes an OmniFocus task with the format `[JIRA-KEY] Issue Summary`
+  </Step>
+  <Step title="Sync metadata">
+    Due dates, descriptions, and statuses are synchronized from Jira to OmniFocus
+  </Step>
+  <Step title="Map statuses">
+    Jira statuses like "Done" and "Closed" automatically complete OmniFocus tasks
+  </Step>
+</Steps>
+
+<Note>
+  This is a **read-only** plugin. It never modifies your Jira issues, only reads from them to update OmniFocus.
+</Note>
+
+## Task mapping
+
+Each Jira issue is converted to an OmniFocus task with these fields:
+
+- **Task name**: `[JIRA-KEY] Issue Summary`
+- **Due date**: Synced from Jira's due date field
+- **Notes**: Contains link to the issue, current status, and description
+- **Tags**: Assigned your configured tag name (e.g., `Work:JIRA`)
+- **Status**: Mapped based on Jira status:
+  - `Done`, `Closed`, `Resolved` → Completed
+  - `Withdrawn` → Dropped
+  - Other statuses → Active
+
+<Info>
+  Tasks are identified by the `[JIRA-KEY]` prefix. The plugin uses this to avoid creating duplicates and to update existing tasks when issues change.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Install the plugin" icon="download" href="/installation">
+    Copy the plugin to your OmniFocus Plug-Ins directory
+  </Card>
+  <Card title="Configure credentials" icon="key" href="/configuration">
+    Set up your Jira URL, API token, and sync preferences
+  </Card>
+</CardGroup>

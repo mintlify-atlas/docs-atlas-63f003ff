@@ -1,0 +1,534 @@
+---
+title: "Settings Reference"
+description: "Complete reference for all configuration settings and credentials"
+---
+
+The plugin stores configuration in two separate secure locations: credentials in the macOS Keychain and settings in OmniFocus Preferences.
+
+## Storage Architecture
+
+### Credentials (Secure Keychain)
+
+```javascript
+jiraCommon.CREDENTIAL_SERVICE = 'com.omnifocus.plugin.jira-sync';
+
+jiraCommon.saveCredentials = (accountId, apiToken) => {
+  credentials.remove(jiraCommon.CREDENTIAL_SERVICE);
+  credentials.write(jiraCommon.CREDENTIAL_SERVICE, accountId, apiToken);
+};
+
+jiraCommon.getCredentials = () => {
+  const credential = credentials.read(jiraCommon.CREDENTIAL_SERVICE);
+  if (credential) {
+    return {
+      accountId: credential.user,
+      apiToken: credential.password
+    };
+  }
+  return null;
+};
+```
+
+### Settings (Preferences API)
+
+```javascript
+jiraCommon.SETTINGS_KEY = 'jiraSync.settings';
+
+jiraCommon.saveSettings = (settings) => {
+  preferences.write(jiraCommon.SETTINGS_KEY, JSON.stringify(settings));
+};
+
+jiraCommon.getSettings = () => {
+  const settingsString = preferences.read(jiraCommon.SETTINGS_KEY);
+  if (settingsString) {
+    try {
+      return JSON.parse(settingsString);
+    } catch (e) {
+      console.error('Failed to parse settings:', e);
+      return null;
+    }
+  }
+  return null;
+};
+```
+
+---
+
+## Credentials
+
+Stored in macOS Keychain under service name `com.omnifocus.plugin.jira-sync`.
+
+<ParamField path="accountId" type="string" required>
+  Your Jira account ID (not email address).
+  
+  **How to find:**
+  1. Log in to Jira
+  2. Visit your profile page
+  3. Look for the account ID in the URL: `https://yourcompany.atlassian.net/jira/people/{accountId}`
+  
+  **Example:** `5d8f9c0a1234abcd5678efgh`
+  
+  **Storage:** Keychain `user` field
+</ParamField>
+
+<ParamField path="apiToken" type="string" required>
+  Jira API token for authentication.
+  
+  **How to generate:**
+  1. Visit https://id.atlassian.com/manage-profile/security/api-tokens
+  2. Click "Create API token"
+  3. Give it a descriptive label (e.g., "OmniFocus Sync")
+  4. Copy the token immediately (cannot be viewed again)
+  
+  **Storage:** Keychain `password` field
+  
+  **Security:** Transmitted via Basic Auth over HTTPS:
+  ```javascript
+  const auth = jiraCommon.base64Encode(`${accountId}:${apiToken}`);
+  const headers = {
+    'Authorization': `Basic ${auth}`,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+  };
+  ```
+</ParamField>
+
+<Warning>
+Do not use your Jira password. API tokens are more secure and can be revoked independently.
+</Warning>
+
+---
+
+## Settings
+
+Stored in OmniFocus Preferences as JSON under key `jiraSync.settings`.
+
+### Connection Settings
+
+<ParamField path="jiraUrl" type="string" required>
+  Base URL of your Jira instance.
+  
+  **Format:** Must start with `https://` and end without trailing slash
+  
+  **Examples:**
+  - `https://yourcompany.atlassian.net`
+  - `https://jira.yourcompany.com`
+  
+  **Validation:**
+  ```javascript
+  if (!jiraUrl.startsWith('https://')) {
+    throw new Error('Jira URL must start with https:// for security.');
+  }
+  
+  const urlPattern = /^https:\/\/[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(\/.*)?$/;
+  if (!urlPattern.test(jiraUrl)) {
+    throw new Error('Invalid Jira URL format.');
+  }
+  
+  // Normalize by removing trailing slash
+  const normalizedUrl = jiraUrl.replace(/\/$/, '');
+  ```
+  
+  **Default:** None (required field)
+</ParamField>
+
+<ParamField path="jqlQuery" type="string" required>
+  JQL (Jira Query Language) query to filter issues.
+  
+  **Examples:**
+  - `assignee = currentUser() AND resolution = Unresolved`
+  - `project = PROJ AND status != Done`
+  - `labels = urgent AND created >= -30d`
+  
+  **Validation:** Tested during configuration by executing the query
+  
+  **Incremental sync modifier:**
+  ```javascript
+  if (!fullRefresh && lastSyncTime) {
+    const formattedTime = `${year}-${month}-${day} ${hours}:${minutes}`;
+    finalJql = `(${jql}) AND updated >= "${formattedTime}"`;
+  }
+  ```
+  
+  **Default:** None (required field)
+</ParamField>
+
+### OmniFocus Organization
+
+<ParamField path="tagName" type="string" required>
+  Tag name to apply to all synced tasks.
+  
+  **Format:** Use colons for nested tags (e.g., `Work:JIRA`)
+  
+  **Validation:**
+  ```javascript
+  if (tagName.includes('/') || tagName.includes('\\')) {
+    throw new Error('Tag name cannot contain forward slashes (/) or backslashes (\\).');
+  }
+  ```
+  
+  **Usage:** Used to identify synced tasks during full refresh
+  ```javascript
+  const tag = tagNamed(tagName);
+  const existingTasks = tag ? tag.tasks : [];
+  ```
+  
+  **Default:** None (required field)
+</ParamField>
+
+<ParamField path="enableProjectOrganization" type="boolean" default="false">
+  Enable parent-child project organization for Jira subtasks.
+  
+  **Behavior when enabled:**
+  - Subtasks are created under parent tasks or projects
+  - Parent-child relationships are preserved from Jira
+  - Requires parent to exist before subtask is synced
+  
+  **Behavior when disabled:**
+  - All issues are created as flat tasks
+  - No hierarchy is created
+  
+  **Implementation:**
+  ```javascript
+  if (settings.enableProjectOrganization && fields.parent) {
+    const parentKey = fields.parent.key;
+    parent = jiraCommon.findParentContainer(taskIndex, projectIndex, parentKey);
+  }
+  ```
+  
+  **Default:** `false`
+</ParamField>
+
+<ParamField path="defaultProjectFolder" type="string">
+  Folder path for organizing projects created from parent issues.
+  
+  **Format:** Use colons for nested folders (e.g., `Work:Projects`)
+  
+  **Behavior:**
+  - If folder exists: Projects created in specified folder
+  - If folder not found: Projects created at root level (logged warning)
+  - If empty: Projects created at root level
+  
+  **Folder lookup:**
+  ```javascript
+  jiraCommon.findNestedFolder = (folderPath) => {
+    const parts = folderPath.split(':').map(p => p.trim());
+    let currentFolder = folderNamed(parts[0]);
+    if (!currentFolder) {
+      console.log(`Folder "${folderPath}" not found`);
+      return null;
+    }
+    // Navigate through nested folders
+    for (let i = 1; i < parts.length; i++) {
+      const foundChild = currentFolder.folders.find(f => f.name === parts[i]);
+      if (!foundChild) return null;
+      currentFolder = foundChild;
+    }
+    return currentFolder;
+  };
+  ```
+  
+  **Default:** Empty (root level)
+</ParamField>
+
+### Status Mapping
+
+<ParamField path="completedStatuses" type="string[]">
+  List of Jira status names that should mark tasks as completed.
+  
+  **Format:** Array of strings (comma-separated in UI)
+  
+  **Input processing:**
+  ```javascript
+  const completedStatusesRaw = (formObject.values.completedStatuses || '').trim();
+  const completedStatuses = completedStatusesRaw
+    ? completedStatusesRaw.split(',').map(s => s.trim()).filter(s => s.length > 0)
+    : [];
+  ```
+  
+  **Default values:**
+  ```javascript
+  jiraCommon.COMPLETED_STATUSES = ['Done', 'Closed', 'Resolved'];
+  ```
+  
+  **Effective resolution:**
+  ```javascript
+  const completed = (settings && Array.isArray(settings.completedStatuses) && settings.completedStatuses.length > 0)
+    ? settings.completedStatuses
+    : jiraCommon.COMPLETED_STATUSES;
+  ```
+  
+  **Case sensitivity:** Status matching is case-sensitive
+  
+  **Examples:**
+  - `Done, Closed, Resolved`
+  - `Done, Released, Deployed`
+  - `Complete, Finished`
+</ParamField>
+
+<ParamField path="droppedStatuses" type="string[]">
+  List of Jira status names that should mark tasks as dropped.
+  
+  **Format:** Array of strings (comma-separated in UI)
+  
+  **Default values:**
+  ```javascript
+  jiraCommon.DROPPED_STATUSES = ['Withdrawn'];
+  ```
+  
+  **Usage:**
+  ```javascript
+  const shouldBeDropped = statusMappings.dropped.includes(statusName);
+  if (shouldBeDropped && task.taskStatus !== Task.Status.Dropped) {
+    task.drop(true);
+  }
+  ```
+  
+  **Examples:**
+  - `Withdrawn`
+  - `Cancelled, Rejected`
+  - `Won't Do, Invalid`
+</ParamField>
+
+### Sync State
+
+<ParamField path="lastSyncTime" type="string">
+  ISO 8601 timestamp of the last successful sync.
+  
+  **Format:** `YYYY-MM-DDTHH:mm:ss.sssZ`
+  
+  **Example:** `2026-03-03T14:23:45.123Z`
+  
+  **Updated after sync:**
+  ```javascript
+  const newSyncTime = new Date().toISOString();
+  lib.saveSettings({ ...settings, lastSyncTime: newSyncTime });
+  ```
+  
+  **Used for incremental queries:**
+  ```javascript
+  const date = new Date(lastSyncTime);
+  const formattedTime = `${year}-${month}-${day} ${hours}:${minutes}`;
+  finalJql = `(${jql}) AND updated >= "${formattedTime}"`;
+  ```
+  
+  **Preserved on reconfiguration:**
+  ```javascript
+  const newSettings = {
+    // ... other settings ...
+    lastSyncTime: currentSettings.lastSyncTime || null
+  };
+  ```
+  
+  **Default:** `null` (first sync fetches all matching issues)
+</ParamField>
+
+---
+
+## Constants
+
+Hardcoded values in `jiraCommon.js`:
+
+### API Configuration
+
+```javascript
+jiraCommon.JIRA_API_VERSION = 3;
+jiraCommon.MAX_RESULTS_PER_PAGE = 100;
+jiraCommon.JIRA_FIELDS = ['summary', 'description', 'status', 'duedate', 'updated', 'parent'];
+```
+
+<ParamField path="JIRA_API_VERSION" type="number" default="3">
+  Jira REST API version to use.
+  
+  Endpoints:
+  - `/rest/api/3/search/jql`
+  - `/rest/api/3/myself`
+</ParamField>
+
+<ParamField path="MAX_RESULTS_PER_PAGE" type="number" default="100">
+  Maximum number of issues to fetch per API request.
+  
+  Pagination is handled automatically using `nextPageToken`.
+</ParamField>
+
+<ParamField path="JIRA_FIELDS" type="string[]">
+  Fields retrieved from Jira API.
+  
+  **Current fields:**
+  - `summary`: Issue title
+  - `description`: ADF-formatted description
+  - `status`: Current status (name and category)
+  - `duedate`: Due date (ISO date string)
+  - `updated`: Last update timestamp
+  - `parent`: Parent issue (for subtasks)
+</ParamField>
+
+### HTTP Status Codes
+
+```javascript
+jiraCommon.HTTP_STATUS_OK = 200;
+jiraCommon.HTTP_STATUS_BAD_REQUEST = 400;
+jiraCommon.HTTP_STATUS_UNAUTHORIZED = 401;
+jiraCommon.HTTP_STATUS_FORBIDDEN = 403;
+jiraCommon.HTTP_STATUS_NOT_FOUND = 404;
+jiraCommon.HTTP_STATUS_TOO_MANY_REQUESTS = 429;
+jiraCommon.HTTP_STATUS_INTERNAL_SERVER_ERROR = 500;
+jiraCommon.HTTP_STATUS_BAD_GATEWAY = 502;
+jiraCommon.HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
+jiraCommon.HTTP_STATUS_GATEWAY_TIMEOUT = 504;
+```
+
+### Retry Configuration
+
+```javascript
+jiraCommon.RETRY_MAX_ATTEMPTS = 3;
+jiraCommon.RETRY_BASE_DELAY_MS = 1000;
+jiraCommon.RETRY_MAX_DELAY_MS = 60000;
+jiraCommon.RETRYABLE_STATUS_CODES = [429, 500, 502, 503, 504];
+jiraCommon.NON_RETRYABLE_STATUS_CODES = [400, 401, 403, 404];
+```
+
+<ParamField path="RETRY_MAX_ATTEMPTS" type="number" default="3">
+  Maximum number of retry attempts for failed requests.
+  
+  Total attempts = 1 initial + 3 retries = 4 attempts.
+</ParamField>
+
+<ParamField path="RETRY_BASE_DELAY_MS" type="number" default="1000">
+  Base delay between retries in milliseconds.
+  
+  **Exponential backoff:**
+  ```javascript
+  let delayMs = jiraCommon.RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+  ```
+  
+  - Attempt 0: 1000ms (1s)
+  - Attempt 1: 2000ms (2s)
+  - Attempt 2: 4000ms (4s)
+  - Attempt 3: 8000ms (8s)
+</ParamField>
+
+<ParamField path="RETRY_MAX_DELAY_MS" type="number" default="60000">
+  Maximum delay between retries (1 minute).
+  
+  Used for rate limiting with `Retry-After` header:
+  ```javascript
+  if (response.statusCode === jiraCommon.HTTP_STATUS_TOO_MANY_REQUESTS) {
+    const retryAfter = response.headers['Retry-After'];
+    if (retryAfter) {
+      const retryAfterMs = parseInt(retryAfter, 10) * 1000;
+      delayMs = Math.min(retryAfterMs, jiraCommon.RETRY_MAX_DELAY_MS);
+    }
+  }
+  ```
+</ParamField>
+
+---
+
+## Error Messages
+
+The plugin provides actionable error messages based on HTTP status codes:
+
+```javascript
+jiraCommon.createJiraErrorMessage = (statusCode, responseBody) => {
+  switch (statusCode) {
+    case 400:
+      return 'Invalid request to Jira API. This usually means there is a problem with your JQL query.';
+    case 401:
+      return 'Authentication failed. Your Jira API token may be invalid or expired.';
+    case 403:
+      return 'Access denied. Your Jira account does not have permission to access this resource.';
+    case 404:
+      return 'Jira instance not found. The Jira URL may be incorrect.';
+    case 429:
+      return 'Rate limited by Jira. Too many requests have been made in a short period.';
+    default:
+      return `Jira API returned status ${statusCode}.`;
+  }
+};
+```
+
+<Note>
+The plugin attempts to extract detailed error messages from Jira's JSON response (`errorMessages` and `errors` fields) and appends them to the error message.
+</Note>
+
+---
+
+## Security Features
+
+### Safe Logging
+
+The plugin redacts sensitive information from console logs:
+
+```javascript
+jiraCommon.safeLog = (message, obj) => {
+  const sensitiveKeys = [
+    'password', 'apiToken', 'token', 'authorization', 'Authorization',
+    'api_token', 'access_token', 'accessToken', 'secret', 'key',
+    'nextPageToken', 'pageToken', 'emailAddress', 'email'
+  ];
+  
+  // Recursively sanitize object
+  function sanitizeObject(obj) {
+    for (const key in obj) {
+      const isSensitive = sensitiveKeys.some(sensitiveKey =>
+        key.toLowerCase().includes(sensitiveKey.toLowerCase())
+      );
+      if (isSensitive) {
+        obj[key] = '***';
+      }
+    }
+  }
+  
+  sanitizeObject(sanitized);
+  console.log(message, JSON.stringify(sanitized));
+};
+```
+
+### HTTPS Enforcement
+
+All Jira URLs must use HTTPS:
+
+```javascript
+if (!jiraUrl.startsWith('https://')) {
+  throw new Error('Jira URL must start with https:// for security.');
+}
+```
+
+### Basic Authentication
+
+Credentials are Base64-encoded and sent via Authorization header:
+
+```javascript
+jiraCommon.base64Encode = (str) => {
+  const base64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  let i = 0;
+  
+  while (i < str.length) {
+    const a = str.charCodeAt(i++);
+    const b = i < str.length ? str.charCodeAt(i++) : 0;
+    const c = i < str.length ? str.charCodeAt(i++) : 0;
+    
+    const bitmap = (a << 16) | (b << 8) | c;
+    
+    result += base64Chars.charAt((bitmap >> 18) & 63);
+    result += base64Chars.charAt((bitmap >> 12) & 63);
+    result += i - 2 < str.length ? base64Chars.charAt((bitmap >> 6) & 63) : '=';
+    result += i - 1 < str.length ? base64Chars.charAt(bitmap & 63) : '=';
+  }
+  
+  return result;
+};
+
+const auth = jiraCommon.base64Encode(`${accountId}:${apiToken}`);
+const headers = {
+  'Authorization': `Basic ${auth}`,
+  'Accept': 'application/json',
+  'Content-Type': 'application/json'
+};
+```
+
+<Warning>
+Basic Auth transmits credentials in every request. Always use HTTPS and keep your API tokens secure.
+</Warning>

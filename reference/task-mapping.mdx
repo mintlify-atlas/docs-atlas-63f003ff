@@ -1,0 +1,366 @@
+---
+title: "Task Mapping"
+description: "How Jira issues are mapped to OmniFocus tasks"
+---
+
+The plugin creates a bidirectional mapping between Jira issues and OmniFocus tasks using consistent naming conventions and metadata.
+
+## Task Identification
+
+Tasks are identified by embedding the Jira issue key in the task name:
+
+```javascript
+const taskName = `[${jiraKey}] ${fields.summary}`;
+```
+
+### Example
+
+| Jira Issue | OmniFocus Task Name |
+|------------|---------------------|
+| `PROJ-123: Implement login feature` | `[PROJ-123] Implement login feature` |
+| `BUG-456: Fix null pointer error` | `[BUG-456] Fix null pointer error` |
+
+### Lookup Algorithm
+
+The plugin uses the bracket-enclosed key to find existing tasks:
+
+```javascript
+// Build index for O(1) lookups
+jiraCommon.buildTaskIndex = () => {
+  const index = new Map();
+  for (const task of flattenedTasks) {
+    const match = task.name.match(/^\[([^\]]+)\]/);
+    if (match) {
+      index.set(match[1], task);  // Maps "PROJ-123" -> Task
+    }
+  }
+  return index;
+};
+
+// Find task by key
+const existingTask = lib.findTaskByJiraKeyIndexed(taskIndex, jiraKey);
+```
+
+<Warning>
+Manually renaming a task to remove the `[JIRA-KEY]` prefix will cause the plugin to create a duplicate task on the next sync.
+</Warning>
+
+---
+
+## Field Mapping
+
+### Jira Fields Retrieved
+
+The plugin fetches these fields from Jira API:
+
+```javascript
+jiraCommon.JIRA_FIELDS = ['summary', 'description', 'status', 'duedate', 'updated', 'parent'];
+```
+
+### OmniFocus Task Properties
+
+<ParamField path="name" type="string" required>
+  Format: `[JIRA-KEY] Summary`
+  
+  Updated when the Jira summary changes:
+  ```javascript
+  const expectedName = `[${jiraKey}] ${fields.summary}`;
+  if (task.name !== expectedName) {
+    task.name = expectedName;
+    updated = true;
+  }
+  ```
+</ParamField>
+
+<ParamField path="dueDate" type="Date">
+  Synced from Jira's `duedate` field:
+  ```javascript
+  if (fields.duedate) {
+    try {
+      task.dueDate = new Date(fields.duedate);
+    } catch (e) {
+      console.error(`Failed to set due date for ${jiraKey}:`, e);
+    }
+  }
+  ```
+  
+  Clears due date if removed in Jira:
+  ```javascript
+  if (!newDueDate && currentDueDate) {
+    task.dueDate = null;
+  }
+  ```
+</ParamField>
+
+<ParamField path="note" type="string">
+  Contains Jira URL, status, and description in Markdown format:
+  ```javascript
+  const baseUrl = jiraUrl.replace(/\/$/, '');
+  const issueUrl = `${baseUrl}/browse/${jiraKey}`;
+  const description = jiraCommon.convertAdfToMarkdown(fields.description);
+  const notes = `---\nURL: ${issueUrl}\nStatus: ${fields.status.name}\n---\n\n${description}`;
+  task.note = notes;
+  ```
+  
+  Example output:
+  ```markdown
+  ---
+  URL: https://company.atlassian.net/browse/PROJ-123
+  Status: In Progress
+  ---
+  
+  This is the issue description with **formatting** preserved.
+  
+  - Bullet points
+  - Are converted
+  
+  [Links](https://example.com) work too.
+  ```
+</ParamField>
+
+<ParamField path="tags" type="Tag[]">
+  The configured tag is applied to all synced tasks:
+  ```javascript
+  const tag = tagNamed(tagName) || new Tag(tagName);
+  task.addTag(tag);
+  ```
+  
+  Supports nested tags using colon notation:
+  - `Work:JIRA`
+  - `Personal:Errands`
+  - `Projects:Q1:Engineering`
+</ParamField>
+
+<ParamField path="taskStatus" type="Task.Status">
+  Mapped from Jira status name using configurable status lists.
+  
+  See [Status Mapping](#status-mapping) below.
+</ParamField>
+
+---
+
+## Status Mapping
+
+Jira status names are mapped to OmniFocus task statuses using configurable lists.
+
+### Default Status Mappings
+
+```javascript
+jiraCommon.COMPLETED_STATUSES = ['Done', 'Closed', 'Resolved'];
+jiraCommon.DROPPED_STATUSES = ['Withdrawn'];
+```
+
+### Custom Status Configuration
+
+You can override defaults in the configuration form:
+
+- **Completed Statuses:** Comma-separated list (e.g., `Done, Closed, Resolved, Released`)
+- **Dropped Statuses:** Comma-separated list (e.g., `Withdrawn, Cancelled, Rejected`)
+
+### Status Resolution Logic
+
+```javascript
+jiraCommon.getStatusMappings = (settings) => {
+  const completed = (settings && Array.isArray(settings.completedStatuses) && settings.completedStatuses.length > 0)
+    ? settings.completedStatuses
+    : jiraCommon.COMPLETED_STATUSES;
+  const dropped = (settings && Array.isArray(settings.droppedStatuses) && settings.droppedStatuses.length > 0)
+    ? settings.droppedStatuses
+    : jiraCommon.DROPPED_STATUSES;
+  return { completed, dropped };
+};
+```
+
+### Task Status Updates
+
+```javascript
+const statusName = fields.status.name;
+const statusMappings = lib.getStatusMappings(settings);
+const shouldBeCompleted = statusMappings.completed.includes(statusName);
+const shouldBeDropped = statusMappings.dropped.includes(statusName);
+
+if (shouldBeCompleted && task.taskStatus !== Task.Status.Completed) {
+  task.markComplete();
+  updated = true;
+} else if (shouldBeDropped && task.taskStatus !== Task.Status.Dropped) {
+  task.drop(true);
+  updated = true;
+} else if (!shouldBeCompleted && !shouldBeDropped) {
+  // Reopen if status changed back to active
+  if (task.taskStatus === Task.Status.Completed || task.taskStatus === Task.Status.Dropped) {
+    task.markIncomplete();
+    updated = true;
+  }
+}
+```
+
+### Reopening Tasks
+
+If a completed or dropped task in OmniFocus has its Jira status changed to an active state, the plugin will reopen it:
+
+```javascript
+const wasCompleted = existingTask.taskStatus === Task.Status.Completed;
+const wasDropped = existingTask.taskStatus === Task.Status.Dropped;
+// ... update logic ...
+if ((wasCompleted || wasDropped) && !isNowCompleted && !isNowDropped) {
+  stats.reopened++;
+}
+```
+
+<Note>
+Status matching is **case-sensitive**. "done" (lowercase) will not match "Done" (capitalized).
+</Note>
+
+---
+
+## Description Conversion
+
+Jira descriptions use Atlassian Document Format (ADF), a JSON-based rich text format. The plugin converts ADF to Markdown.
+
+### Supported ADF Elements
+
+| ADF Node Type | Markdown Output | Example |
+|---------------|-----------------|----------|
+| `paragraph` | Double newline | `\n\n` |
+| `heading` | Hash prefix | `## Heading 2` |
+| `bulletList` | Dashes | `- Item` |
+| `orderedList` | Numbers | `1. Item` |
+| `codeBlock` | Fenced code | ` ```js\ncode\n``` ` |
+| `text` with `strong` | Bold | `**bold**` |
+| `text` with `em` | Italic | `*italic*` |
+| `text` with `code` | Inline code | `` `code` `` |
+| `text` with `strike` | Strikethrough | `~~strike~~` |
+| `text` with `link` | Links | `[text](url)` |
+| `hardBreak` | Line break | `  \n` |
+| `rule` | Horizontal rule | `---` |
+| `blockquote` | Quote prefix | `> quote` |
+| `mention` | At-mention | `@username` |
+| `emoji` | Shortcode | `:smile:` |
+
+### Conversion Implementation
+
+```javascript
+jiraCommon.convertAdfToMarkdown = (adf) => {
+  if (!adf || typeof adf !== 'object') {
+    return '';
+  }
+
+  function convertNode(node, context = {}) {
+    switch (node.type) {
+      case 'text':
+        let text = node.text || '';
+        if (node.marks && Array.isArray(node.marks)) {
+          node.marks.forEach(mark => {
+            switch (mark.type) {
+              case 'strong':
+                text = `**${text}**`;
+                break;
+              case 'em':
+                text = `*${text}*`;
+                break;
+              case 'code':
+                text = `\`${text}\``;
+                break;
+              case 'link':
+                const href = mark.attrs && mark.attrs.href ? mark.attrs.href : '';
+                text = `[${text}](${href})`;
+                break;
+            }
+          });
+        }
+        return text;
+      // ... other cases ...
+    }
+  }
+
+  return convertNode(adf).trim();
+};
+```
+
+<Note>
+The conversion preserves nested lists, code blocks with language hints, and complex formatting like bold italic text.
+</Note>
+
+---
+
+## Parent-Child Relationships
+
+When "Enable Project Organization" is enabled, the plugin organizes subtasks under parent issues.
+
+### Finding Parent Containers
+
+```javascript
+jiraCommon.findParentContainer = (taskIndex, projectIndex, parentKey) => {
+  // Prefer existing Task (creates task group)
+  if (taskIndex) {
+    const parentTask = jiraCommon.findTaskByJiraKeyIndexed(taskIndex, parentKey);
+    if (parentTask) {
+      return parentTask;
+    }
+  }
+  
+  // Fall back to existing Project
+  if (projectIndex) {
+    const parentProject = jiraCommon.findProjectByJiraKeyIndexed(projectIndex, parentKey);
+    if (parentProject) {
+      return parentProject;
+    }
+  }
+  
+  // Parent not found - create flat task
+  return null;
+};
+```
+
+### Creating Subtasks
+
+```javascript
+let parent = null;
+if (settings.enableProjectOrganization && fields.parent) {
+  const parentKey = fields.parent.key;
+  parent = jiraCommon.findParentContainer(taskIndex, projectIndex, parentKey);
+  if (!parent) {
+    console.log(`Parent ${parentKey} not found; creating ${jiraKey} as flat task`);
+  }
+}
+
+// Create under parent or at root
+const task = parent ? new Task(taskName, parent) : new Task(taskName);
+```
+
+### Hierarchy Behavior
+
+- **Parent exists as Task:** Subtask created in task group
+- **Parent exists as Project:** Subtask created in project
+- **Parent not found:** Subtask created as flat task at root
+- **Parent removed:** Task remains in current location (cannot be moved)
+
+<Warning>
+OmniFocus does not allow moving tasks between projects after creation. If a parent relationship changes in Jira, the plugin logs a warning but cannot move the task.
+</Warning>
+
+---
+
+## Skip Logic for Completed Issues
+
+The plugin avoids creating tasks for issues that are already completed or dropped in Jira:
+
+```javascript
+const statusMappings = lib.getStatusMappings(settings);
+const shouldSkipCreation = statusMappings.completed.includes(statusName) || 
+                          statusMappings.dropped.includes(statusName);
+
+if (existingTask) {
+  // Update existing task
+  lib.updateTaskFromJiraIssue(existingTask, issue, jiraUrl, tagName, settings, projectIndex);
+} else if (!shouldSkipCreation) {
+  // Create new task only if not completed/dropped
+  lib.createTaskFromJiraIssue(issue, jiraUrl, tagName, settings, projectIndex, taskIndex);
+  stats.created++;
+} else {
+  // Skip creation
+  stats.skipped++;
+}
+```
+
+This prevents cluttering OmniFocus with already-completed work when syncing historical issues.

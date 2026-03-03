@@ -1,0 +1,406 @@
+---
+title: JQL Query Examples
+description: JQL query patterns and examples for filtering Jira issues in OmniFocus Jira Sync
+---
+
+JQL (Jira Query Language) is a powerful query language that lets you filter which Jira issues get synced to OmniFocus. The plugin uses your JQL query as the foundation for all syncs.
+
+## How JQL Queries Work
+
+Your JQL query determines which issues are synced:
+
+1. Configure your base JQL query in **Configure JIRA Sync**
+2. The plugin executes this query against Jira's REST API
+3. For incremental syncs, a time filter is automatically appended
+4. Results are fetched with pagination (100 issues per page)
+5. Each matching issue creates or updates an OmniFocus task
+
+<Info>
+The plugin automatically handles pagination. Your query can return thousands of issues - all will be synced.
+</Info>
+
+## Common Query Patterns
+
+### My Unresolved Issues
+
+Fetch all your open issues that haven't been resolved yet:
+
+```jql
+assignee = currentUser() AND resolution = Unresolved
+```
+
+This is the most common pattern and works well for most users.
+
+<Accordion title="Why use 'resolution = Unresolved'?">
+  The `resolution` field indicates whether an issue has been resolved, regardless of its status. Using `resolution = Unresolved` ensures you see all active work, even if the issue status is "In Progress", "To Do", "Waiting", etc.
+</Accordion>
+
+### Current Sprint
+
+Sync issues assigned to you in active sprints:
+
+```jql
+sprint in openSprints() AND assignee = currentUser()
+```
+
+Use this if you work in Scrum and only want to focus on current sprint work.
+
+### High Priority Issues
+
+Focus on your most important tasks:
+
+```jql
+assignee = currentUser() AND priority in (High, Highest)
+```
+
+<Note>
+Priority values are case-sensitive and may vary by Jira instance. Common values: `Highest`, `High`, `Medium`, `Low`, `Lowest`.
+</Note>
+
+### Specific Project
+
+Sync issues from a particular project:
+
+```jql
+project = PROJ AND assignee = currentUser()
+```
+
+Replace `PROJ` with your project key (e.g., `MYTEAM`, `ENG`, `SUPPORT`).
+
+### Multiple Projects
+
+Sync issues from several projects:
+
+```jql
+project in (PROJ1, PROJ2, PROJ3) AND assignee = currentUser()
+```
+
+### By Label
+
+Filter issues with specific labels:
+
+```jql
+labels = important AND assignee = currentUser()
+```
+
+Or multiple labels:
+
+```jql
+labels in (urgent, important) AND assignee = currentUser()
+```
+
+### By Issue Type
+
+Sync only specific issue types:
+
+```jql
+assignee = currentUser() AND type in (Bug, Task)
+```
+
+Common issue types: `Task`, `Bug`, `Story`, `Epic`, `Sub-task`.
+
+## Advanced Query Patterns
+
+### Combining Multiple Criteria
+
+Create complex filters by combining conditions with `AND`:
+
+```jql
+project = PROJ AND assignee = currentUser() AND resolution = Unresolved AND priority in (High, Highest)
+```
+
+This syncs only high-priority, unresolved issues from project PROJ that are assigned to you.
+
+### OR Conditions
+
+Use `OR` to broaden your criteria:
+
+```jql
+assignee = currentUser() OR reporter = currentUser()
+```
+
+This syncs issues you're assigned to OR issues you reported.
+
+<Warning>
+When mixing `AND` and `OR`, use parentheses to control precedence:
+
+```jql
+(assignee = currentUser() OR reporter = currentUser()) AND resolution = Unresolved
+```
+</Warning>
+
+### Excluding Issues
+
+Use `!=` or `NOT IN` to exclude specific values:
+
+```jql
+assignee = currentUser() AND status != Done AND priority != Low
+```
+
+### Date Ranges
+
+Filter by creation or update date:
+
+```jql
+assignee = currentUser() AND created >= -7d
+```
+
+This syncs issues assigned to you created in the last 7 days.
+
+Common date expressions:
+- `-7d`: Last 7 days
+- `-1w`: Last week
+- `-2w`: Last 2 weeks
+- `-1M`: Last month
+
+### Epic and Parent Issues
+
+Sync issues belonging to specific epics:
+
+```jql
+parent = PROJ-123 AND assignee = currentUser()
+```
+
+Or sync issues from multiple epics:
+
+```jql
+parent in (PROJ-123, PROJ-456) AND assignee = currentUser()
+```
+
+### Custom Fields
+
+Query custom fields using their ID:
+
+```jql
+assignee = currentUser() AND cf[10001] = "High Value"
+```
+
+<Accordion title="Finding custom field IDs">
+  1. Go to Jira Settings → Issues → Custom fields
+  2. Click on the custom field name
+  3. Look at the URL - the ID is in the format `customFieldId=10001`
+  4. Use `cf[10001]` in your JQL query
+</Accordion>
+
+## Query Testing
+
+Before saving your JQL query in the plugin configuration, test it in Jira:
+
+<Steps>
+  <Step title="Open Jira's Issue Search">
+    Navigate to **Filters → Advanced issue search** in Jira
+  </Step>
+  <Step title="Enter Your JQL Query">
+    Type or paste your JQL query into the search box
+  </Step>
+  <Step title="Run the Query">
+    Click **Search** to see matching issues
+  </Step>
+  <Step title="Verify Results">
+    Confirm the results match your expectations
+  </Step>
+  <Step title="Save to Plugin">
+    Copy the working query to **Configure JIRA Sync** in OmniFocus
+  </Step>
+</Steps>
+
+<Info>
+The plugin's **Test Connection** feature validates your query syntax before saving.
+</Info>
+
+## Incremental Sync Query Modification
+
+During incremental sync, the plugin automatically modifies your query:
+
+<CodeGroup>
+
+```jql Your Query
+assignee = currentUser() AND resolution = Unresolved
+```
+
+```jql Actual Query Executed (Incremental)
+(assignee = currentUser() AND resolution = Unresolved) AND updated >= "2024-03-15 09:30"
+```
+
+```jql Actual Query Executed (Full)
+assignee = currentUser() AND resolution = Unresolved
+```
+
+</CodeGroup>
+
+From the source code at `jiraCommon.js:273-285`:
+
+```javascript
+let finalJql = jql;
+if (!fullRefresh && lastSyncTime) {
+  const date = new Date(lastSyncTime);
+  const formattedTime = `${year}-${month}-${day} ${hours}:${minutes}`;
+  finalJql = `(${jql}) AND updated >= "${formattedTime}"`;
+}
+```
+
+<Note>
+You don't need to add the time filter yourself - the plugin handles this automatically for incremental syncs.
+</Note>
+
+## Query Validation
+
+The plugin validates your query during configuration using Jira's REST API:
+
+```javascript
+// From jiraCommon.js:804-820
+const searchUrl = `${baseUrl}/rest/api/3/search/jql`;
+const params = {
+  jql: jqlQuery,
+  maxResults: 1,
+  fields: ['key']
+};
+```
+
+The validation:
+- Tests authentication with `/rest/api/3/myself`
+- Executes your JQL query with `maxResults: 1`
+- Returns the total issue count matching your query
+- Shows clear error messages if the query is invalid
+
+## Common Query Errors
+
+### Syntax Errors
+
+<Tabs>
+  <Tab title="Missing Operator">
+    **Error**: `assignee currentUser()`
+    
+    **Fix**: `assignee = currentUser()`
+    
+    Always use `=` or other comparison operators.
+  </Tab>
+  <Tab title="Unquoted Spaces">
+    **Error**: `project = My Project`
+    
+    **Fix**: `project = "My Project"`
+    
+    Quote values containing spaces.
+  </Tab>
+  <Tab title="Invalid Field Name">
+    **Error**: `assigne = currentUser()`
+    
+    **Fix**: `assignee = currentUser()`
+    
+    Check spelling of field names.
+  </Tab>
+  <Tab title="Case Sensitivity">
+    **Error**: `priority = high`
+    
+    **Fix**: `priority = High`
+    
+    Priority and status values are case-sensitive.
+  </Tab>
+</Tabs>
+
+### Permission Errors
+
+If your query returns a 403 Forbidden error:
+
+- You may not have permission to view certain projects
+- Your Jira account may lack "Browse Projects" permission
+- Contact your Jira administrator for access
+
+## Query Performance Tips
+
+### Be Specific
+
+Narrow queries perform better:
+
+<CodeGroup>
+
+```jql Slow
+resolution = Unresolved
+```
+
+```jql Fast
+project = PROJ AND assignee = currentUser() AND resolution = Unresolved
+```
+
+</CodeGroup>
+
+### Use Indexed Fields
+
+These fields are typically indexed and perform well:
+- `assignee`
+- `project`
+- `status`
+- `priority`
+- `resolution`
+- `created`
+- `updated`
+
+### Avoid Text Searches
+
+Text searches are slow:
+
+```jql
+text ~ "keyword" AND assignee = currentUser()
+```
+
+Use specific fields instead:
+
+```jql
+summary ~ "keyword" AND assignee = currentUser()
+```
+
+## Real-World Query Examples
+
+<Tabs>
+  <Tab title="Software Engineer">
+    ```jql
+    assignee = currentUser() 
+    AND resolution = Unresolved 
+    AND type in (Bug, Story, Task) 
+    AND sprint in openSprints()
+    ```
+    
+    Syncs active sprint work (bugs, stories, tasks) that's unresolved.
+  </Tab>
+  <Tab title="Support Team">
+    ```jql
+    project = SUPPORT 
+    AND assignee = currentUser() 
+    AND status not in (Closed, Resolved) 
+    AND priority in (High, Highest)
+    ```
+    
+    Syncs high-priority support tickets that aren't closed.
+  </Tab>
+  <Tab title="Product Manager">
+    ```jql
+    (assignee = currentUser() OR reporter = currentUser()) 
+    AND type in (Epic, Story) 
+    AND resolution = Unresolved
+    ```
+    
+    Syncs epics and stories you're assigned to or reported.
+  </Tab>
+  <Tab title="Multi-Team">
+    ```jql
+    project in (TEAM1, TEAM2, TEAM3) 
+    AND assignee = currentUser() 
+    AND resolution = Unresolved 
+    AND priority != Low
+    ```
+    
+    Syncs work across multiple teams, excluding low-priority items.
+  </Tab>
+</Tabs>
+
+## Resources
+
+For more information on JQL syntax:
+
+- [Atlassian JQL Documentation](https://www.atlassian.com/software/jira/guides/jql)
+- [JQL Functions Reference](https://support.atlassian.com/jira-software-cloud/docs/jql-functions/)
+- [JQL Fields Reference](https://support.atlassian.com/jira-software-cloud/docs/jql-fields/)
+
+<Info>
+JQL syntax may vary slightly between Jira Cloud and Jira Server/Data Center. This plugin is designed for Jira Cloud (REST API v3).
+</Info>

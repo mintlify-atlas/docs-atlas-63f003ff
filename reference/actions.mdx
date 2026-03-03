@@ -1,0 +1,269 @@
+---
+title: "Plugin Actions"
+description: "Reference for all OmniFocus Jira Sync plugin actions"
+---
+
+The plugin provides three actions accessible through OmniFocus's Automation menu. Each action is defined in the plugin manifest with a unique identifier and system icon.
+
+## Configure Jira Sync
+
+**Identifier:** `configureJira`  
+**Icon:** `gearshape.fill`  
+**File:** `Resources/configureJira.js`
+
+Opens a configuration form to set up Jira connection settings and sync preferences.
+
+### Form Fields
+
+The action presents a form with the following fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| JIRA URL | String | Yes | Base URL of your Jira instance |
+| JIRA Account ID | String | Yes | Your Jira account identifier |
+| JIRA API Token | Password | Yes | API token for authentication |
+| JQL Query | String | Yes | JQL query to filter issues |
+| OmniFocus Tag | String | Yes | Tag name to apply to synced tasks |
+| Enable Project Organization | Checkbox | No | Enable parent-child project structure |
+| Default Folder for Projects | String | No | Folder path for organizing projects |
+| Completed Statuses | String | No | Comma-separated list of completion statuses |
+| Dropped Statuses | String | No | Comma-separated list of dropped statuses |
+
+### Validation Rules
+
+The action validates inputs before saving:
+
+```javascript
+// All required fields must be filled
+if (!jiraUrl || !accountId || !apiToken || !jqlQuery || !tagName) {
+  throw new Error('All fields are required. Please fill in all configuration values.');
+}
+
+// Jira URL must use HTTPS
+if (!jiraUrl.startsWith('https://')) {
+  throw new Error('Jira URL must start with https:// for security.');
+}
+
+// URL format validation
+const urlPattern = /^https:\/\/[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(\/.*)?$/;
+if (!urlPattern.test(jiraUrl)) {
+  throw new Error('Invalid Jira URL format.');
+}
+
+// Tag name cannot contain slashes
+if (tagName.includes('/') || tagName.includes('\\')) {
+  throw new Error('Tag name cannot contain forward slashes (/) or backslashes (\\).');
+}
+```
+
+<Note>
+The URL is automatically normalized by removing trailing slashes before saving.
+</Note>
+
+### Connection Test
+
+Before saving settings, the action tests the connection:
+
+```javascript
+const testResult = await lib.testConnection(
+  normalizedUrl,
+  accountId,
+  apiToken,
+  jqlQuery
+);
+```
+
+The test verifies:
+1. Authentication using the `/rest/api/3/myself` endpoint
+2. JQL query validity by executing it with `maxResults: 1`
+
+On success, displays:
+```
+Authenticated as: [Display Name]
+Connection test passed: Found [N] issue(s) matching your JQL query.
+```
+
+### Data Storage
+
+Settings and credentials are stored separately:
+
+- **Credentials** (secure keychain via Credentials API):
+  ```javascript
+  credentials.write(jiraCommon.CREDENTIAL_SERVICE, accountId, apiToken);
+  ```
+
+- **Settings** (Preferences API):
+  ```javascript
+  const newSettings = {
+    jiraUrl: normalizedUrl,
+    jqlQuery: jqlQuery,
+    tagName: tagName,
+    enableProjectOrganization: enableProjectOrganization,
+    defaultProjectFolder: defaultProjectFolder,
+    completedStatuses: completedStatuses.length > 0 ? completedStatuses : undefined,
+    droppedStatuses: droppedStatuses.length > 0 ? droppedStatuses : undefined,
+    lastSyncTime: currentSettings.lastSyncTime || null
+  };
+  lib.saveSettings(newSettings);
+  ```
+
+<Warning>
+The action does not validate whether the default folder exists in OmniFocus. If the folder is not found during sync, projects will be created at the root level.
+</Warning>
+
+---
+
+## Sync Jira
+
+**Identifier:** `syncJira`  
+**Icon:** `arrow.triangle.2.circlepath`  
+**File:** `Resources/syncJira.js`
+
+Performs an incremental sync, fetching only issues modified since the last successful sync.
+
+### Behavior
+
+1. **Validates Configuration**
+   ```javascript
+   const settings = lib.getSettings();
+   if (!settings) {
+     throw new Error('JIRA sync is not configured.');
+   }
+   const creds = lib.getCredentials();
+   if (!creds) {
+     throw new Error('JIRA credentials not found.');
+   }
+   ```
+
+2. **Builds Incremental JQL Query**
+   ```javascript
+   const { jiraUrl, jqlQuery, tagName, lastSyncTime } = settings;
+   const issues = await lib.fetchJiraIssues(
+     jiraUrl, accountId, apiToken, jqlQuery, 
+     false,  // not full refresh
+     lastSyncTime
+   );
+   ```
+
+   If `lastSyncTime` exists, appends:
+   ```
+   AND updated >= "YYYY-MM-DD HH:MM"
+   ```
+
+3. **Processes Issues**
+   - Builds task and project indexes for O(1) lookups
+   - For each issue:
+     - Finds existing task by `[JIRA-KEY]` prefix
+     - If exists: updates task properties and status
+     - If not exists and status is not completed/dropped: creates new task
+     - If not exists and status is completed/dropped: skips creation
+
+4. **Updates Sync Time**
+   ```javascript
+   const newSyncTime = new Date().toISOString();
+   lib.saveSettings({ ...settings, lastSyncTime: newSyncTime });
+   ```
+
+### Statistics
+
+The action tracks and reports:
+- **Created:** New tasks added
+- **Updated:** Existing tasks modified
+- **Reopened:** Previously completed/dropped tasks marked active
+- **Completed:** Tasks marked complete due to status change
+- **Skipped:** Issues not created because they're already completed/dropped in Jira
+
+### Example Output
+
+```
+Sync completed successfully!
+
+Created: 3
+Updated: 12
+Reopened: 1
+Completed: 2
+Skipped: 0
+```
+
+<Note>
+Incremental sync does **not** complete tasks that have been removed from Jira results. Use "Sync Jira Full" for cleanup operations.
+</Note>
+
+---
+
+## Sync Jira Full
+
+**Identifier:** `syncJiraFull`  
+**Icon:** `arrow.triangle.2.circlepath.circle.fill`  
+**File:** `Resources/syncJiraFull.js`
+
+Performs a full refresh sync, fetching all issues matching the base JQL query and cleaning up stale tasks.
+
+### Behavior
+
+1. **Fetches All Issues**
+   ```javascript
+   const issues = await lib.fetchJiraIssues(
+     jiraUrl, accountId, apiToken, jqlQuery,
+     true,   // full refresh = true
+     lastSyncTime
+   );
+   ```
+
+   The `fullRefresh` flag is set to `true`, fetching all matching issues without date filtering.
+
+2. **Updates Existing Tasks**
+   
+   Same processing logic as incremental sync:
+   - Update existing tasks
+   - Create new tasks (if not completed/dropped)
+   - Skip creation for completed/dropped issues
+
+3. **Completes Stale Tasks**
+   
+   Finds tasks that no longer match the JQL query:
+
+   ```javascript
+   const tag = tagNamed(tagName);
+   const existingTasks = tag ? tag.tasks : [];
+   const issueKeysFromJira = new Set(issues.map(i => i.key));
+
+   for (const task of existingTasks) {
+     // Skip Projects
+     if (task.tasks !== undefined) {
+       continue;
+     }
+
+     const match = task.name.match(/^\[([^\]]+)\]/);
+     if (match) {
+       const taskJiraKey = match[1];
+
+       if (!issueKeysFromJira.has(taskJiraKey) &&
+           task.taskStatus !== Task.Status.Completed &&
+           task.taskStatus !== Task.Status.Dropped) {
+         task.markComplete();
+         stats.completed++;
+         console.log(`Completed (no longer in JIRA): ${taskJiraKey}`);
+       }
+     }
+   }
+   ```
+
+<Warning>
+Full sync will mark tasks as completed if they no longer appear in Jira results. This includes issues that have been moved out of scope by changing assignee, labels, or other JQL criteria.
+</Warning>
+
+### Use Cases
+
+- **Cleanup:** Remove tasks for issues that no longer match your JQL query
+- **Recovery:** Sync all issues after configuration changes
+- **Initial Setup:** First sync after configuring the plugin
+- **Debugging:** Verify complete sync state when troubleshooting
+
+### Performance
+
+Full sync fetches all issues matching the JQL query and processes all existing tagged tasks. For large result sets (1000+ issues), this may take several minutes.
+
+<Note>
+Both sync actions handle Jira pagination automatically, fetching up to 100 issues per request and following `nextPageToken` until `isLast` is true.
+</Note>

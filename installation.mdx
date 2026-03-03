@@ -1,0 +1,127 @@
+---
+title: Installation
+description: Install the OmniFocus Jira Sync plugin and verify it appears in OmniFocus
+---
+
+# Installation
+
+Follow these steps to install the OmniFocus Jira Sync plugin on your Mac.
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- OmniFocus 3 or later installed on macOS
+- A Jira account with access to your organization's Jira instance
+- Administrative access to generate a Jira API token
+
+<Note>
+  This plugin stores credentials in macOS Keychain and requires OmniFocus to have the necessary permissions.
+</Note>
+
+## Installation steps
+
+<Steps>
+  <Step title="Download the plugin">
+    Download or clone the plugin repository to your local machine.
+  </Step>
+  
+  <Step title="Locate the plugin directory">
+    Find the `omnifocus-jira-sync.omnifocusjs` directory in the downloaded files. This directory contains the plugin manifest and all action files.
+  </Step>
+  
+  <Step title="Copy to OmniFocus Plug-Ins folder">
+    Copy the entire `omnifocus-jira-sync.omnifocusjs` directory to your OmniFocus Plug-Ins location:
+    
+    ```bash
+    ~/Library/Mobile Documents/iCloud~com~omnigroup~OmniFocus/Documents/Plug-Ins/
+    ```
+    
+    You can navigate to this directory in Finder by:
+    1. Open Finder
+    2. Press `⌘⇧G` (Cmd+Shift+G) to open "Go to Folder"
+    3. Paste the path above
+    4. Click "Go"
+    
+    <Info>
+      If the `Plug-Ins` directory doesn't exist, create it first.
+    </Info>
+  </Step>
+  
+  <Step title="Restart OmniFocus">
+    Completely quit and relaunch OmniFocus:
+    1. Press `⌘Q` (Cmd+Q) to quit OmniFocus
+    2. Relaunch OmniFocus from Applications or Spotlight
+    
+    <Warning>
+      You must fully quit OmniFocus, not just close the window. Use `⌘Q` to ensure a complete restart.
+    </Warning>
+  </Step>
+  
+  <Step title="Verify installation">
+    Check that the plugin appears in OmniFocus:
+    1. Go to **Automation → Plug-Ins** in the menu bar
+    2. Look for "Jira Sync" in the list
+    3. You should see three actions:
+       - **Configure JIRA Sync** (gear icon)
+       - **Sync Jira** (circular arrows)
+       - **Sync Jira Full** (circular arrows with circle)
+  </Step>
+</Steps>
+
+## Installation directory structure
+
+After installation, your directory structure should look like this:
+
+```
+~/Library/Mobile Documents/iCloud~com~omnigroup~OmniFocus/Documents/Plug-Ins/
+└── omnifocus-jira-sync.omnifocusjs/
+    ├── manifest.json
+    └── Resources/
+        ├── configureJira.js
+        ├── syncJira.js
+        ├── syncJiraFull.js
+        └── jiraCommon/
+            └── jiraCommon.js
+```
+
+<Note>
+  The `.omnifocusjs` extension is required for OmniFocus to recognize the directory as a plugin.
+</Note>
+
+## Troubleshooting
+
+### Plugin doesn't appear in OmniFocus
+
+If the plugin doesn't show up after restarting:
+
+1. **Verify the directory location**: Ensure the plugin is in the correct Plug-Ins directory
+2. **Check the directory name**: The directory must end with `.omnifocusjs`
+3. **Confirm complete restart**: Use `⌘Q` to fully quit OmniFocus, don't just close the window
+4. **Check Console.app for errors**:
+   - Open Console.app from Applications/Utilities
+   - Filter for "OmniFocus" process
+   - Look for error messages related to plugin loading
+
+### Permission issues
+
+If you see permission errors:
+
+1. Ensure OmniFocus has permission to access iCloud Drive in **System Preferences → Privacy & Security**
+2. Check that the plugin files are readable (not locked or restricted)
+
+### iCloud Drive sync issues
+
+If you use multiple Macs:
+
+<Info>
+  The plugin will sync across Macs via iCloud Drive. Wait a few minutes for iCloud to sync the Plug-Ins directory to other devices, then restart OmniFocus on each Mac.
+</Info>
+
+## Next steps
+
+Now that you've installed the plugin, you need to configure it with your Jira credentials:
+
+<Card title="Configure the plugin" icon="gear" href="/configuration">
+  Set up your Jira URL, API token, JQL query, and sync preferences
+</Card>

@@ -1,0 +1,297 @@
+---
+title: Security & Privacy
+description: Security and privacy information for OmniFocus Jira Sync
+---
+
+OmniFocus Jira Sync is designed with security and privacy as top priorities. This page explains how your credentials and data are handled.
+
+## Credential Storage
+
+### macOS Keychain
+
+Your Jira credentials are stored securely using the **macOS Keychain** via the OmniFocus Credentials API:
+
+- **Account ID**: Your Jira account identifier (email)
+- **API Token**: Your Jira API authentication token
+
+These credentials are:
+- Encrypted at rest by macOS
+- Protected by your system password or Touch ID/Face ID
+- Never transmitted to any third party
+- Only accessible by OmniFocus on your Mac
+
+**Keychain Service Name**: `com.omnifocus.plugin.jira-sync`
+
+You can view or delete these credentials using the **Keychain Access** app:
+
+1. Open **Keychain Access** (Applications → Utilities)
+2. Search for: `com.omnifocus.plugin.jira-sync`
+3. Double-click to view details or right-click to delete
+
+### API Token Generation
+
+To generate a Jira API token:
+
+1. Go to [https://id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+2. Click **Create API token**
+3. Give it a descriptive name (e.g., "OmniFocus Sync")
+4. Copy the token immediately (you won't be able to see it again)
+5. Enter it in the OmniFocus **Configure JIRA Sync** dialog
+
+**Best Practices**:
+- Create a dedicated token for OmniFocus (don't reuse tokens across tools)
+- Name tokens descriptively so you can identify them later
+- Rotate tokens periodically (e.g., every 6-12 months)
+- Revoke tokens immediately if you suspect compromise
+
+### Credential Security
+
+The plugin implements several security measures:
+
+**Safe Logging**: All console logs automatically redact sensitive information:
+- Passwords and API tokens
+- Authorization headers
+- Email addresses
+- Access tokens
+
+Sensitive fields are replaced with `***` in logs to prevent accidental credential leakage.
+
+**No External Transmission**: Credentials are only sent to your configured Jira instance. The plugin:
+- Never sends data to third-party servers
+- Never reports usage telemetry
+- Never shares credentials with external services
+
+**Basic Authentication**: Credentials are sent using HTTP Basic Authentication:
+- Encoded in Base64 format
+- Transmitted over HTTPS (encrypted in transit)
+- Included only in the `Authorization` header
+
+The plugin implements its own Base64 encoding because `btoa()` is not available in the OmniFocus JavaScript environment.
+
+## Settings Storage
+
+### OmniFocus Preferences
+
+Non-sensitive configuration settings are stored in OmniFocus Preferences:
+
+- **Jira URL**: Your Atlassian instance URL (e.g., `https://company.atlassian.net`)
+- **JQL Query**: Your issue filter query
+- **Tag Name**: The tag to apply to synced tasks
+- **Last Sync Time**: Timestamp of the last successful sync
+- **Status Mappings**: Custom status-to-state mappings (if configured)
+- **Project Organization Settings**: Folder paths and parent issue handling
+
+**Preferences Key**: `jiraSync.settings`
+
+These settings are stored in JSON format in OmniFocus preferences and are not encrypted, but they contain no sensitive information.
+
+## Data Privacy
+
+### What Data is Synced
+
+The plugin fetches the following fields from Jira issues:
+
+- **Summary**: Issue title
+- **Description**: Issue description (converted from Atlassian Document Format to Markdown)
+- **Status**: Current issue status
+- **Due Date**: Issue due date
+- **Updated**: Last modified timestamp
+- **Parent**: Parent issue/Epic reference
+
+All data is stored locally in OmniFocus and is not transmitted elsewhere.
+
+### Read-Only Access
+
+The plugin has **read-only access** to your Jira instance:
+
+- It **never modifies** Jira issues
+- It **never creates** new issues or comments
+- It **never changes** issue status, assignees, or any other fields
+- It only performs **GET** requests to the Jira API
+
+This ensures your Jira data remains unchanged by the sync process.
+
+### Data Minimization
+
+The plugin only fetches data required for task synchronization:
+
+- Uses JQL queries to filter issues (only syncs what you specify)
+- Fetches only necessary fields (not all issue data)
+- Implements pagination to avoid overwhelming API calls
+- Uses incremental sync by default (fetches only recently updated issues)
+
+### Local Processing
+
+All data processing happens locally on your Mac:
+
+- Description conversion (Atlassian Document Format → Markdown)
+- Task deduplication
+- Status mapping
+- Project organization
+
+No data is sent to external services for processing.
+
+## Network Security
+
+### HTTPS Only
+
+All communication with Jira uses HTTPS:
+
+- Credentials are encrypted in transit
+- API responses are encrypted
+- Man-in-the-middle attacks are prevented by TLS
+
+The plugin enforces HTTPS by requiring URLs to include the `https://` protocol.
+
+### Retry Logic
+
+The plugin implements intelligent retry logic to handle transient network failures:
+
+- **Maximum Attempts**: 3 retries per request
+- **Exponential Backoff**: 1s, 2s, 4s delays between retries
+- **Rate Limit Handling**: Respects Jira's `Retry-After` header (up to 60s)
+- **Retryable Errors**: 429 (rate limit), 500, 502, 503, 504 (server errors)
+- **Non-Retryable Errors**: 400, 401, 403, 404 (configuration issues)
+
+This prevents excessive API calls while ensuring reliable synchronization.
+
+### Cellular Access
+
+The plugin allows requests over cellular connections when Wi-Fi is unavailable. If you prefer to restrict sync to Wi-Fi only, you can:
+
+1. Disable cellular data for OmniFocus in **System Settings → Cellular**
+2. Run sync only when connected to Wi-Fi
+
+## Permissions
+
+### OmniFocus Permissions
+
+The plugin uses these OmniFocus APIs:
+
+- **Credentials API**: To securely store and retrieve Jira credentials
+- **Preferences API**: To store non-sensitive settings
+- **Task API**: To create and update tasks
+- **Tag API**: To assign tags to synced tasks
+- **Project API**: To organize tasks into projects (if enabled)
+- **Alert API**: To display success/error messages
+- **Form API**: To show the configuration dialog
+
+### Jira Permissions
+
+The plugin requires these Jira permissions (granted to the user whose API token is used):
+
+- **Browse Projects**: View issues in projects
+- **View Issues**: Read issue details
+- **Search Issues**: Execute JQL queries
+
+The plugin does **not** require:
+- Edit Issues
+- Create Issues
+- Delete Issues
+- Administer Projects
+
+**Recommendation**: Use a Jira account with read-only access if available. This minimizes risk in case credentials are compromised.
+
+## Privacy Policy
+
+OmniFocus Jira Sync:
+
+- **Does not collect** personal information
+- **Does not track** usage or analytics
+- **Does not transmit** data to third parties
+- **Does not use** cookies or tracking technologies
+
+All data remains on your Mac and your Jira instance.
+
+## Compliance
+
+### GDPR Compliance
+
+For users subject to GDPR:
+
+- All data is stored locally on your device (data controller is you)
+- No data is shared with third parties
+- You can delete all plugin data by:
+  1. Removing credentials from Keychain Access
+  2. Deleting synced tasks in OmniFocus
+  3. Removing the plugin directory
+
+### SOC 2 / ISO 27001
+
+If your organization requires SOC 2 or ISO 27001 compliance:
+
+- The plugin relies on macOS Keychain (Apple-certified secure storage)
+- All communication uses industry-standard TLS encryption
+- No data is processed by third-party services
+- Audit logs are available in Console.app
+
+## Security Best Practices
+
+### For Users
+
+1. **Protect Your API Token**:
+   - Never share your API token with others
+   - Don't commit tokens to version control
+   - Revoke tokens immediately if compromised
+
+2. **Use Strong Passwords**:
+   - Protect your Mac with a strong password or passphrase
+   - Enable FileVault for full-disk encryption
+   - Use Touch ID/Face ID for additional security
+
+3. **Keep Software Updated**:
+   - Update macOS regularly for security patches
+   - Keep OmniFocus updated
+   - Check for plugin updates periodically
+
+4. **Review JQL Queries**:
+   - Only sync issues you need access to
+   - Avoid overly broad queries (e.g., `project = *`)
+   - Test queries in Jira before using in the plugin
+
+5. **Monitor Sync Activity**:
+   - Review sync statistics after each run
+   - Check for unexpected task changes
+   - Use Console.app to audit API requests
+
+### For Administrators
+
+1. **Jira Access Control**:
+   - Grant read-only permissions to sync accounts
+   - Use project-level permissions to restrict access
+   - Monitor API token usage in Jira audit logs
+
+2. **Network Security**:
+   - Ensure Jira instance uses HTTPS
+   - Use VPN if required by organizational policy
+   - Monitor network traffic for anomalies
+
+3. **Device Management**:
+   - Require device encryption (FileVault)
+   - Implement device passcode policies
+   - Use Mobile Device Management (MDM) to enforce security settings
+
+## Reporting Security Issues
+
+If you discover a security vulnerability:
+
+1. **Do not** open a public GitHub issue
+2. Email the maintainer directly (check README for contact info)
+3. Include:
+   - Description of the vulnerability
+   - Steps to reproduce
+   - Potential impact
+   - Suggested fix (if available)
+
+We will respond within 48 hours and work with you to resolve the issue before public disclosure.
+
+## Transparency
+
+This plugin is **open source** under the MIT License:
+
+- All code is publicly auditable on GitHub
+- No obfuscation or hidden functionality
+- Community contributions are welcome
+- Security improvements are encouraged
+
+You can review the source code at: [https://github.com/PowerSchill/omnifocus-jira-sync](https://github.com/PowerSchill/omnifocus-jira-sync)

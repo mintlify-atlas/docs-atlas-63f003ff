@@ -1,0 +1,316 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for OmniFocus Jira Sync
+---
+
+This page covers common issues you may encounter and how to resolve them.
+
+## Installation Issues
+
+<Accordion title="Plugin doesn't appear in OmniFocus">
+  **Symptoms**: The plugin is not visible in Automation → Plug-Ins after installation.
+
+  **Solutions**:
+  1. Verify the plugin is in the correct directory:
+     ```
+     ~/Library/Mobile Documents/iCloud~com~omnigroup~OmniFocus/Documents/Plug-Ins/
+     ```
+  2. Ensure the directory name ends with `.omnifocusjs`
+  3. Completely restart OmniFocus (⌘Q to quit, not just close the window, then relaunch)
+  4. Check Console.app for errors:
+     - Open Console.app
+     - Filter for "OmniFocus" in the search bar
+     - Look for error messages related to plugin loading
+</Accordion>
+
+<Accordion title="Plugin appears but actions are grayed out">
+  **Symptoms**: The plugin shows up in the Plug-Ins menu but sync actions cannot be run.
+
+  **Solution**: Run **Configure JIRA Sync** first to set up your credentials and settings. The sync actions are disabled until configuration is complete.
+</Accordion>
+
+## Authentication Issues
+
+<Accordion title="HTTP 401: Authentication failed">
+  **Error Message**: `Authentication failed. Your Jira API token may be invalid or expired.`
+
+  **Causes**:
+  - Invalid or expired API token
+  - Incorrect account ID or email
+  - Token lacks necessary permissions
+
+  **Solutions**:
+  1. Regenerate your API token at [https://id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+  2. Run **Configure JIRA Sync** and enter the new token
+  3. Verify you're using the correct Jira account ID (not username)
+</Accordion>
+
+<Accordion title="HTTP 403: Access denied">
+  **Error Message**: `Access denied. Your Jira account does not have permission to access this resource.`
+
+  **Causes**:
+  - Your Jira account lacks read permissions for the requested issues
+  - Project or board permissions restrict access
+
+  **Solutions**:
+  1. Verify your Jira account has permission to view the issues in your JQL query
+  2. Test your JQL query directly in Jira's issue search to confirm it returns results
+  3. Contact your Jira administrator to request appropriate permissions
+</Accordion>
+
+## Connection Issues
+
+<Accordion title="HTTP 404: Jira instance not found">
+  **Error Message**: `Jira instance not found. The Jira URL may be incorrect.`
+
+  **Causes**:
+  - Incorrect Jira URL
+  - Typo in the domain name
+  - Missing `https://` protocol
+
+  **Solutions**:
+  1. Verify your Jira URL includes `https://` (e.g., `https://yourcompany.atlassian.net`)
+  2. Test the URL in your web browser to confirm it's accessible
+  3. Run **Configure JIRA Sync** and correct the URL
+</Accordion>
+
+<Accordion title="Network connection errors">
+  **Error Message**: `Failed to connect to Jira after 3 attempts: [error details]`
+
+  **Causes**:
+  - No internet connection
+  - Firewall blocking outbound requests
+  - VPN required but not connected
+  - Jira instance temporarily unavailable
+
+  **Solutions**:
+  1. Check your internet connection
+  2. If using a VPN, ensure it's connected
+  3. Verify firewall settings allow OmniFocus to make network requests
+  4. Try again after a few minutes
+
+  **Note**: The plugin automatically retries failed requests up to 3 times with exponential backoff (1s, 2s, 4s delays).
+</Accordion>
+
+<Accordion title="HTTP 429: Rate limited">
+  **Error Message**: `Rate limited by Jira. Too many requests have been made in a short period.`
+
+  **Causes**:
+  - Running sync too frequently
+  - Other integrations using the same API token
+  - Jira instance rate limits reached
+
+  **Solutions**:
+  1. Wait a few minutes before retrying
+  2. Reduce sync frequency
+  3. If using multiple tools with the same API token, consider creating separate tokens for each
+
+  **Note**: The plugin respects Jira's `Retry-After` header and automatically waits before retrying (up to 60 seconds).
+</Accordion>
+
+## JQL Query Issues
+
+<Accordion title="HTTP 400: Invalid JQL query">
+  **Error Message**: `Invalid request to Jira API. This usually means there is a problem with your JQL query.`
+
+  **Causes**:
+  - Syntax error in JQL query
+  - Invalid field names or operators
+  - Typo in project key, status name, or other values
+
+  **Solutions**:
+  1. Test your JQL query directly in Jira:
+     - Go to Jira and click **Filters → Advanced issue search**
+     - Paste your query and click **Search**
+  2. Check the error details returned by Jira (displayed in the error message)
+  3. Common fixes:
+     - Ensure project keys are uppercase (e.g., `PROJ` not `proj`)
+     - Use quotes for multi-word values (e.g., `status = "In Progress"`)
+     - Verify field names are spelled correctly (e.g., `assignee` not `assigned`)
+   4. See [JQL examples](/usage/jql-queries) for reference
+</Accordion>
+
+<Accordion title="No issues syncing (query returns no results)">
+  **Symptoms**: Sync completes successfully but no tasks are created or updated.
+
+  **Causes**:
+  - JQL query doesn't match any issues
+  - Issues haven't been updated since last sync (for incremental sync)
+  - All matching issues are already synced and unchanged
+
+  **Solutions**:
+  1. Test your JQL query in Jira to verify it returns issues
+  2. For incremental sync, try running **Sync Jira Full** to fetch all matching issues
+  3. Check the sync statistics message for details
+  4. If using `updated >= [date]` in your query, ensure issues have been modified recently
+</Accordion>
+
+## Task Synchronization Issues
+
+<Accordion title="Duplicate tasks appearing">
+  **Symptoms**: Multiple tasks exist for the same Jira issue.
+
+  **Causes**:
+  - Tasks were created manually without the `[JIRA-KEY]` prefix
+  - Tasks were renamed, removing the prefix
+  - Database inconsistency
+
+  **Solutions**:
+  1. Verify tasks have the correct `[JIRA-KEY]` prefix format
+  2. Manually delete duplicate tasks
+  3. Run **Sync Jira Full** to refresh all tasks
+
+  **Prevention**: Never manually rename tasks to remove the `[JIRA-KEY]` prefix. The plugin uses this prefix to identify and deduplicate tasks.
+</Accordion>
+
+<Accordion title="Tasks not updating when Jira issues change">
+  **Symptoms**: Changes in Jira don't appear in OmniFocus after sync.
+
+  **Causes**:
+  - Using incremental sync but issue hasn't been updated in Jira since last sync
+  - Issue no longer matches JQL query
+  - Task was manually modified in OmniFocus (manual changes are overwritten on next sync)
+
+  **Solutions**:
+  1. Run **Sync Jira Full** to force a complete refresh
+  2. Verify the issue still matches your JQL query in Jira
+  3. Check the issue's "Updated" date in Jira to ensure it's recent
+</Accordion>
+
+<Accordion title="Tasks marked complete but Jira issues are still open">
+  **Symptoms**: OmniFocus tasks are completed during full sync even though Jira issues are active.
+
+  **Causes**:
+  - Issue no longer matches your JQL query (moved to a different project, reassigned, etc.)
+  - Full sync marks tasks as completed if they don't appear in current results
+
+  **Solutions**:
+  1. Adjust your JQL query to include the missing issues
+  2. Run **Sync Jira Full** again to refresh
+  3. Manually mark tasks as incomplete if they were incorrectly completed
+
+  **Note**: Full sync is designed to clean up tasks that no longer match your query. If you want to keep historical tasks, adjust your JQL query or avoid running full sync.
+</Accordion>
+
+<Accordion title="Task status not syncing correctly">
+  **Symptoms**: Task completion status doesn't match Jira issue status.
+
+  **Causes**:
+  - Custom Jira status names not in the default mapping
+  - Status mapping configuration is incorrect
+
+  **Solutions**:
+  1. Check your status mappings in **Configure JIRA Sync**
+  2. Default mappings:
+     - **Completed**: Done, Closed, Resolved
+     - **Dropped**: Withdrawn
+     - **Active**: All other statuses
+  3. Add your custom status names to the appropriate mapping (comma-separated)
+  4. Run sync again to apply the new mappings
+</Accordion>
+
+## Project Organization Issues
+
+<Accordion title="Tasks not appearing in expected projects">
+  **Symptoms**: Tasks are created in the inbox instead of projects, or in wrong projects.
+
+  **Causes**:
+  - Project organization is not enabled
+  - Jira issue has no parent (Epic)
+  - Parent project doesn't exist in OmniFocus
+  - Default project folder doesn't exist
+
+  **Solutions**:
+  1. Enable **Project Organization** in **Configure JIRA Sync**
+  2. Verify Jira issues have parent issues (Epics) assigned
+  3. If using a default project folder, ensure the folder structure exists in OmniFocus:
+     - Use colon-separated paths (e.g., `Work:Jira:Epics`)
+     - Create folders manually in OmniFocus before syncing
+  4. Run **Sync Jira Full** to reorganize tasks
+</Accordion>
+
+<Accordion title="Default project folder not found">
+  **Symptoms**: Projects are created at root level instead of in the specified folder.
+
+  **Error Message**: `Folder "[folder path]" not found, creating project at root level`
+
+  **Causes**:
+  - Folder doesn't exist in OmniFocus
+  - Typo in folder path
+  - Incorrect folder path format
+
+  **Solutions**:
+  1. Create the folder structure in OmniFocus:
+     - Right-click in the Projects sidebar → **New Folder**
+     - For nested folders, create each level separately
+  2. Verify the folder path in **Configure JIRA Sync** matches exactly (case-sensitive)
+  3. Use colon-separated paths for nested folders (e.g., `Work:Jira:Epics`)
+  4. Leave the field empty to create projects at root level
+</Accordion>
+
+## Debugging Tips
+
+### View Console Logs
+
+The plugin logs detailed information to the system console, which is helpful for debugging:
+
+1. Open **Console.app** (Applications → Utilities → Console)
+2. In the search bar, enter: `OmniFocus`
+3. Click **Start** to begin streaming logs
+4. Run the sync action in OmniFocus
+5. Look for error messages, warnings, or unexpected behavior
+
+**Tip**: Console logs show:
+- API requests and responses
+- JQL queries being executed
+- Task creation/update details
+- Error messages with stack traces
+- Retry attempts and backoff delays
+
+### Test Configuration
+
+The **Configure JIRA Sync** action includes a connection test that validates:
+- Jira URL accessibility
+- API token authentication
+- JQL query syntax and results
+
+Use this to verify your configuration before running a full sync.
+
+### Incremental vs Full Sync
+
+**Incremental Sync** (`Sync Jira`):
+- Fetches only issues updated since last sync
+- Faster but may miss issues that were moved out of scope
+- Use for regular daily syncs
+
+**Full Refresh Sync** (`Sync Jira Full`):
+- Fetches all issues matching your JQL query
+- Completes tasks no longer in results
+- Use weekly or when troubleshooting
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. Check the [GitHub Issues](https://github.com/PowerSchill/omnifocus-jira-sync/issues) for similar problems
+2. Open a new issue with:
+   - OmniFocus and macOS versions
+   - Steps to reproduce the issue
+   - Relevant Console.app logs
+   - Error messages (redact any sensitive information)
+3. For feature requests, use the **Feature Request** template
+
+## Common Error Messages Reference
+
+| HTTP Status | Error Message | Common Cause |
+|-------------|---------------|---------------|
+| 400 | Invalid request to Jira API | JQL syntax error |
+| 401 | Authentication failed | Invalid API token |
+| 403 | Access denied | Insufficient permissions |
+| 404 | Jira instance not found | Incorrect URL |
+| 429 | Rate limited by Jira | Too many requests |
+| 500/502/503/504 | Jira API returned status [code] | Temporary Jira outage |
+
+**Retryable Errors**: 429, 500, 502, 503, 504 (automatically retried up to 3 times)
+
+**Non-Retryable Errors**: 400, 401, 403, 404 (require configuration changes)

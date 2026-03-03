@@ -1,94 +1,696 @@
 ---
-title: 'Development'
-description: 'Preview changes locally to update your docs'
+title: Development Guide
+description: Technical documentation for contributing to OmniFocus Jira Sync
 ---
 
-<Info>
-  **Prerequisites**:
-  - Node.js version 19 or higher
-  - A docs repository with a `docs.json` file
-</Info>
+This guide provides technical information for developers who want to understand, modify, or contribute to the OmniFocus Jira Sync plugin.
 
-Follow these steps to install and run Mintlify on your operating system.
+## Prerequisites
 
-<Steps>
-<Step title="Install the Mintlify CLI">
+Before you begin development:
 
-```bash
-npm i -g mint
+- **macOS** with [OmniFocus](https://www.omnigroup.com/omnifocus) installed
+- **Node.js** (for linting only, not required for the plugin itself)
+- **Jira Instance** with API access for testing
+- **Text Editor** (VS Code, Sublime Text, etc.)
+- **Console.app** for viewing debug logs
+
+## Plugin Architecture
+
+### OmniFocus Plugin Structure
+
+OmniFocus plugins follow a specific directory structure:
+
 ```
-</Step>
-
-<Step title="Preview locally">
-
-Navigate to your docs directory where your `docs.json` file is located, and run the following command:
-
-```bash
-mint dev
-```
-
-A local preview of your documentation will be available at `http://localhost:3000`.
-
-</Step>
-</Steps>
-
-## Custom ports
-
-By default, Mintlify uses port 3000. You can customize the port Mintlify runs on by using the `--port` flag. For example, to run Mintlify on port 3333, use this command:
-
-```bash
-mint dev --port 3333
+omnifocus-jira-sync.omnifocusjs/          # Plugin bundle (directory)
+├── manifest.json                          # Plugin metadata and actions
+└── Resources/                             # Plugin resources
+    ├── configureJira.js                   # Configuration action
+    ├── syncJira.js                        # Incremental sync action
+    ├── syncJiraFull.js                    # Full refresh sync action
+    └── jiraCommon.js                      # Shared library
 ```
 
-If you attempt to run Mintlify on a port that's already in use, it will use the next available port:
+**Key Points**:
+- The plugin bundle directory **must** end with `.omnifocusjs`
+- `manifest.json` defines available actions and their metadata
+- Each action is an individual JavaScript file in `Resources/`
+- `jiraCommon.js` is a shared library used by all actions
 
-```md
-Port 3000 is already in use. Trying 3001 instead.
+### Manifest Structure
+
+The `manifest.json` file defines the plugin:
+
+```json
+{
+  "author": "Your Name",
+  "identifier": "com.yourcompany.omnifocus.jira-sync",
+  "version": "1.0.0",
+  "description": "Sync Jira issues to OmniFocus",
+  "label": "Jira Sync",
+  "actions": [
+    {
+      "identifier": "configureJira",
+      "label": "Configure JIRA Sync",
+      "shortLabel": "Configure",
+      "image": "gear"
+    },
+    {
+      "identifier": "syncJira",
+      "label": "Sync Jira",
+      "shortLabel": "Sync",
+      "image": "refresh"
+    },
+    {
+      "identifier": "syncJiraFull",
+      "label": "Sync Jira Full",
+      "shortLabel": "Full Sync",
+      "image": "refresh.fill"
+    }
+  ]
+}
 ```
 
-## Mintlify versions
+Each action identifier corresponds to a JavaScript file in `Resources/` (e.g., `configureJira.js`).
 
-Please note that each CLI release is associated with a specific version of Mintlify. If your local preview does not align with the production version, please update the CLI:
+### Action File Structure
 
-```bash
-npm mint update
+All action files follow this pattern:
+
+```javascript
+/* global PlugIn Version Preferences Credentials Task Tag URL Alert Form */
+(() => {
+  const action = new PlugIn.Action(async function(selection, sender) {
+    // Action logic goes here
+    // ...
+  });
+
+  action.validate = function(selection, sender) {
+    // Return true if action should be enabled, false otherwise
+    return true;
+  };
+
+  return action;
+})();
 ```
 
-## Validating links
+**Structure Components**:
+1. **IIFE (Immediately Invoked Function Expression)**: Wraps the entire file to avoid global scope pollution
+2. **PlugIn.Action**: Constructor that takes an async function as the action handler
+3. **validate**: Optional function that determines when the action should be enabled
+4. **return action**: Returns the action object to OmniFocus
 
-The CLI can assist with validating links in your documentation. To identify any broken links, use the following command:
+## Core Components
 
-```bash
-mint broken-links
+### 1. configureJira.js
+
+Provides the configuration interface for setting up Jira credentials and sync settings.
+
+**Key Functions**:
+- Displays a form with input fields for Jira URL, credentials, JQL query, tag name, etc.
+- Tests the connection to Jira before saving
+- Stores credentials in macOS Keychain via the Credentials API
+- Stores settings in OmniFocus Preferences
+
+**Settings Stored**:
+- `jiraUrl`: Jira instance URL
+- `jqlQuery`: JQL filter query
+- `tagName`: OmniFocus tag for synced tasks
+- `lastSyncTime`: Timestamp of last successful sync
+- `completedStatuses`: Custom completed status mappings (optional)
+- `droppedStatuses`: Custom dropped status mappings (optional)
+- `enableProjectOrganization`: Enable automatic project creation
+- `defaultProjectFolder`: Folder path for new projects (optional)
+
+**Credentials Stored** (in Keychain):
+- `user`: Jira account ID
+- `password`: Jira API token
+
+### 2. syncJira.js
+
+Performs incremental synchronization (fetches only recently updated issues).
+
+**Key Features**:
+- Appends `AND updated >= "[lastSyncTime]"` to JQL query
+- Creates new tasks for new issues
+- Updates existing tasks for modified issues
+- Reopens completed/dropped tasks if Jira status changes
+- Updates `lastSyncTime` after successful sync
+
+**Sync Process**:
+1. Load settings and credentials
+2. Build JQL query with time filter
+3. Fetch issues from Jira (with pagination)
+4. For each issue:
+   - Find existing task by `[JIRA-KEY]` prefix
+   - Create or update task
+   - Apply status mappings
+5. Display sync statistics
+
+### 3. syncJiraFull.js
+
+Performs full refresh synchronization (fetches all matching issues and cleans up orphaned tasks).
+
+**Key Features**:
+- Fetches all issues matching base JQL query (no time filter)
+- Creates/updates tasks like incremental sync
+- **Additionally**: Marks tasks as completed if they no longer appear in Jira results
+- Useful for cleanup when issues move out of scope or are deleted
+
+**Cleanup Logic**:
+1. Fetch all issues matching JQL query
+2. Build a set of Jira keys that should exist
+3. Find all OmniFocus tasks with the configured tag
+4. For tasks with `[JIRA-KEY]` prefix not in the result set:
+   - Mark as completed
+   - Log as "completed"
+
+### 4. jiraCommon.js
+
+Shared library providing common functionality used by all actions.
+
+**Key Functions**:
+
+#### Settings Management
+```javascript
+jiraCommon.getSettings()       // Load settings from Preferences
+jiraCommon.saveSettings(obj)   // Save settings to Preferences
 ```
 
-## Deployment
+#### Credentials Management
+```javascript
+jiraCommon.getCredentials()                      // Load from Keychain
+jiraCommon.saveCredentials(accountId, apiToken)  // Save to Keychain
+```
 
-If the deployment is successful, you should see the following:
+#### API Communication
+```javascript
+jiraCommon.fetchJiraIssues(jiraUrl, accountId, apiToken, jql, fullRefresh, lastSyncTime)
+jiraCommon.fetchWithRetry(request)              // Retry with exponential backoff
+jiraCommon.testConnection(jiraUrl, accountId, apiToken, jqlQuery)
+```
 
-<Frame>
-  <img src="/images/checks-passed.png" alt="Screenshot of a deployment confirmation message that says All checks have passed." style={{ borderRadius: '0.5rem' }} />
-</Frame>
+#### Task Management
+```javascript
+jiraCommon.createTaskFromJiraIssue(issue, jiraUrl, tagName, settings, projectIndex, taskIndex)
+jiraCommon.updateTaskFromJiraIssue(task, issue, jiraUrl, tagName, settings, projectIndex)
+jiraCommon.findTaskByJiraKey(jiraKey)           // Linear scan (O(n))
+jiraCommon.buildTaskIndex()                      // Build index for O(1) lookups
+jiraCommon.findTaskByJiraKeyIndexed(index, key)  // Indexed lookup (O(1))
+```
 
-## Code formatting
+#### Project Management
+```javascript
+jiraCommon.findOrCreateProject(parentKey, parentSummary, tagName, defaultFolder, projectIndex)
+jiraCommon.findNestedFolder(folderPath)         // Support "Parent:Child" notation
+jiraCommon.findProjectByJiraKey(jiraKey)        // Linear scan (O(n))
+jiraCommon.buildProjectIndex()                   // Build index for O(1) lookups
+```
 
-We suggest using extensions on your IDE to recognize and format MDX. If you're a VSCode user, consider the [MDX VSCode extension](https://marketplace.visualstudio.com/items?itemName=unifiedjs.vscode-mdx) for syntax highlighting, and [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode) for code formatting.
+#### Data Conversion
+```javascript
+jiraCommon.convertAdfToMarkdown(adf)     // Convert Atlassian Document Format to Markdown
+jiraCommon.base64Encode(str)             // Base64 encoding (btoa not available)
+```
 
-## Troubleshooting
+#### Error Handling
+```javascript
+jiraCommon.createJiraErrorMessage(statusCode, responseBody)  // User-friendly error messages
+jiraCommon.safeLog(message, obj)                             // Log with credential redaction
+```
 
-<AccordionGroup>
-  <Accordion title='Error: Could not load the "sharp" module using the darwin-arm64 runtime'>
+## Key Implementation Details
 
-    This may be due to an outdated version of node. Try the following:
-    1. Remove the currently-installed version of the CLI: `npm remove -g mint`
-    2. Upgrade to Node v19 or higher.
-    3. Reinstall the CLI: `npm i -g mint`
-  </Accordion>
+### Task Identification
 
-  <Accordion title="Issue: Encountering an unknown error">
+Tasks are identified by the `[JIRA-KEY]` prefix in the task name:
+
+```javascript
+const taskName = `[${jiraKey}] ${fields.summary}`;
+```
+
+The plugin searches for tasks with this prefix to determine if a task already exists. This is case-sensitive and exact matching.
+
+### Status Mapping
+
+Jira statuses map to OmniFocus task states:
+
+```javascript
+const COMPLETED_STATUSES = ['Done', 'Closed', 'Resolved'];
+const DROPPED_STATUSES = ['Withdrawn'];
+```
+
+Custom mappings can be configured by users and are retrieved via:
+
+```javascript
+const statusMappings = jiraCommon.getStatusMappings(settings);
+// Returns: { completed: [...], dropped: [...] }
+```
+
+### ADF (Atlassian Document Format) Conversion
+
+Jira descriptions use Atlassian Document Format (JSON). The `convertAdfToMarkdown()` function recursively processes the ADF tree:
+
+**Supported Elements**:
+- Paragraphs, headings (h1-h6)
+- Unordered and ordered lists (with nesting)
+- Code blocks and inline code
+- Text formatting: bold, italic, strikethrough, underline
+- Links, mentions, emoji
+- Blockquotes, horizontal rules
+
+**Example ADF**:
+```json
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "paragraph",
+      "content": [
+        {"type": "text", "text": "Hello "},
+        {"type": "text", "text": "world", "marks": [{"type": "strong"}]}
+      ]
+    }
+  ]
+}
+```
+
+**Converted Markdown**:
+```
+Hello **world**
+```
+
+### Base64 Encoding
+
+Since `btoa()` is not available in OmniFocus JavaScript, the plugin implements custom Base64 encoding:
+
+```javascript
+jiraCommon.base64Encode = (str) => {
+  const base64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  // ... implementation
+};
+```
+
+Used for Basic Authentication headers:
+
+```javascript
+const auth = jiraCommon.base64Encode(`${accountId}:${apiToken}`);
+headers['Authorization'] = `Basic ${auth}`;
+```
+
+### Retry Logic with Exponential Backoff
+
+```javascript
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BASE_DELAY_MS = 1000       // 1 second
+RETRY_MAX_DELAY_MS = 60000       // 60 seconds
+
+// Delay calculation:
+delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt)
+// Attempt 0: 1000ms (1s)
+// Attempt 1: 2000ms (2s)
+// Attempt 2: 4000ms (4s)
+```
+
+**Retryable Status Codes**: 429, 500, 502, 503, 504
+
+**Non-Retryable Status Codes**: 400, 401, 403, 404
+
+**Rate Limit Handling**: For HTTP 429, respects `Retry-After` header (up to 60s max).
+
+### Pagination
+
+Jira API responses are paginated (100 issues per page):
+
+```javascript
+const MAX_RESULTS_PER_PAGE = 100;
+
+do {
+  const params = {
+    jql: finalJql,
+    maxResults: MAX_RESULTS_PER_PAGE,
+    nextPageToken: nextPageToken || undefined
+  };
   
-    Solution: Go to the root of your device and delete the `~/.mintlify` folder. Then run `mint dev` again.
-  </Accordion>
-</AccordionGroup>
+  const response = await jiraCommon.fetchWithRetry(request);
+  const data = JSON.parse(response.bodyString);
+  
+  allIssues.push(...data.issues);
+  
+  if (!data.isLast && data.nextPageToken) {
+    nextPageToken = data.nextPageToken;
+  } else {
+    nextPageToken = null;
+  }
+} while (nextPageToken);
+```
 
-Curious about what changed in the latest CLI version? Check out the [CLI changelog](https://www.npmjs.com/package/mintlify?activeTab=versions).
+### Incremental Sync Time Filtering
+
+For incremental sync, the plugin appends a time filter to the JQL query:
+
+```javascript
+const date = new Date(lastSyncTime);
+const formattedTime = `${year}-${month}-${day} ${hours}:${minutes}`;
+finalJql = `(${jql}) AND updated >= "${formattedTime}"`;
+```
+
+**Format**: `YYYY-MM-DD HH:MM` (Jira JQL date format)
+
+### Performance Optimization
+
+The plugin uses indexed lookups for O(1) task/project searches:
+
+```javascript
+// Build indexes once at start
+const taskIndex = jiraCommon.buildTaskIndex();
+const projectIndex = jiraCommon.buildProjectIndex();
+
+// Use indexed lookups in loop (O(1) instead of O(n))
+for (const issue of issues) {
+  const existingTask = jiraCommon.findTaskByJiraKeyIndexed(taskIndex, issue.key);
+  // ...
+}
+```
+
+This is critical for performance when syncing large numbers of issues (100+).
+
+## OmniFocus API Reference
+
+### Available APIs
+
+**Preferences API**:
+```javascript
+const preferences = new Preferences();
+preferences.read(key);         // Returns string
+preferences.write(key, value); // Value must be string
+```
+
+**Credentials API**:
+```javascript
+const credentials = new Credentials();
+credentials.read(service);                  // Returns {user, password} or null
+credentials.write(service, user, password); // Stores in Keychain
+credentials.remove(service);                // Deletes from Keychain
+```
+
+**Task API**:
+```javascript
+const task = new Task(name, parent);  // parent is Task or Project (optional)
+task.name = 'New Name';
+task.note = 'Description';
+task.dueDate = new Date();
+task.markComplete();
+task.markIncomplete();
+task.drop(true);                      // Mark as dropped
+task.addTag(tag);
+task.taskStatus;                      // Task.Status.Active/Completed/Dropped
+task.containingProject;               // Parent project (read-only)
+```
+
+**Tag API**:
+```javascript
+const tag = tagNamed('TagName');      // Find existing tag
+const newTag = new Tag('NewTag');     // Create new tag
+```
+
+**Project API**:
+```javascript
+const project = new Project(name, folder);  // folder is Folder (optional)
+project.status = Project.Status.Active;
+project.addTag(tag);
+```
+
+**Folder API**:
+```javascript
+const folder = folderNamed('FolderName');  // Find top-level folder
+folder.folders;                            // Child folders array
+```
+
+**Alert API**:
+```javascript
+const alert = new Alert('Title', 'Message');
+alert.show();
+```
+
+**Form API**:
+```javascript
+const form = new Form();
+form.addField(new Form.Field.String('fieldId', 'Label', 'default'));
+form.addField(new Form.Field.Password('fieldId', 'Label'));
+const result = await form.show('Form Title', 'OK Button');
+if (result) {
+  const value = form.values['fieldId'];
+}
+```
+
+**URL API**:
+```javascript
+const request = URL.FetchRequest.fromString(url);
+request.method = 'GET';
+request.headers = {'Authorization': 'Bearer token'};
+request.allowsCellularAccess = true;
+const response = await request.fetch();
+response.statusCode;        // HTTP status code
+response.bodyString;        // Response body as string
+response.headers;           // Response headers object
+```
+
+**Global Functions**:
+```javascript
+flattenedTasks;            // Array of all tasks
+flattenedProjects;         // Array of all projects
+flattenedFolders;          // Array of all folders
+tagNamed(name);            // Find tag by name
+folderNamed(name);         // Find folder by name
+```
+
+### Limitations
+
+**Not Available**:
+- `btoa()` / `atob()` (use custom Base64 implementation)
+- `fetch()` / `XMLHttpRequest` (use `URL.FetchRequest`)
+- Node.js modules (`fs`, `path`, etc.)
+- Browser APIs (`window`, `document`, etc.)
+- ES modules (use IIFEs instead)
+
+**Read-Only Properties**:
+- `task.containingProject` (cannot move tasks between projects after creation)
+- Most properties are read-only after object creation
+
+## Testing
+
+### Manual Testing
+
+There is no automated test suite. Testing is done manually:
+
+1. Make changes to plugin files
+2. Copy the plugin to the OmniFocus Plug-Ins directory:
+   ```bash
+   cp -r omnifocus-jira-sync.omnifocusjs/ \
+     ~/Library/Mobile\ Documents/iCloud~com~omnigroup~OmniFocus/Documents/Plug-Ins/
+   ```
+3. Completely restart OmniFocus (⌘Q, then relaunch)
+4. Run **Configure JIRA Sync** to set up test credentials
+5. Run **Sync Jira** or **Sync Jira Full** to test sync functionality
+6. Check Console.app for debug output:
+   - Open Console.app
+   - Filter for "OmniFocus"
+   - Look for `console.log()` output and errors
+
+### Debugging with Console.app
+
+Use `console.log()` statements liberally:
+
+```javascript
+console.log('Fetching issues with JQL:', finalJql);
+console.log('Received', data.issues.length, 'issues');
+jiraCommon.safeLog('Response data:', data);  // Auto-redacts credentials
+```
+
+**Console Output Format**:
+```
+default    10:30:45.123456-0700    OmniFocus    Fetching issues with JQL: assignee = currentUser()
+default    10:30:46.234567-0700    OmniFocus    Received 42 issues
+```
+
+### Test Scenarios
+
+**Configuration Testing**:
+- Invalid Jira URL
+- Invalid credentials
+- Invalid JQL query
+- Valid configuration
+
+**Sync Testing**:
+- First sync (all new tasks)
+- Incremental sync (some updated, some unchanged)
+- Full sync with cleanup (some issues removed)
+- Status changes (active → completed → reopened)
+- Due date changes
+- Parent issue changes (project organization)
+
+**Edge Cases**:
+- Empty JQL results
+- Large result sets (100+ issues)
+- Issues with no description
+- Issues with complex ADF formatting
+- Network failures (simulate by disconnecting Wi-Fi)
+- Rate limiting (simulate by making many requests quickly)
+
+## Linting
+
+The project uses ESLint for code quality:
+
+```bash
+npm install      # Install dependencies
+npm run lint     # Run linter
+```
+
+**ESLint Configuration** (`.eslintrc.json`):
+```json
+{
+  "env": {
+    "es6": true
+  },
+  "extends": "eslint:recommended",
+  "parserOptions": {
+    "ecmaVersion": 2018
+  },
+  "rules": {
+    "indent": ["error", 2],
+    "quotes": ["error", "single"],
+    "semi": ["error", "always"]
+  }
+}
+```
+
+## Common Development Tasks
+
+### Adding a New Action
+
+1. Create a new JavaScript file in `Resources/` (e.g., `myAction.js`)
+2. Follow the action file structure (IIFE returning `PlugIn.Action`)
+3. Add the action to `manifest.json`:
+   ```json
+   {
+     "identifier": "myAction",
+     "label": "My Action",
+     "shortLabel": "My Action",
+     "image": "star"
+   }
+   ```
+4. Restart OmniFocus to load the new action
+
+### Adding a New Setting
+
+1. Add a form field in `configureJira.js`:
+   ```javascript
+   form.addField(new Form.Field.String('mySetting', 'My Setting', settings.mySetting || ''));
+   ```
+2. Save the setting:
+   ```javascript
+   settings.mySetting = formValues.mySetting;
+   jiraCommon.saveSettings(settings);
+   ```
+3. Use the setting in sync actions:
+   ```javascript
+   const settings = jiraCommon.getSettings();
+   console.log('My setting value:', settings.mySetting);
+   ```
+
+### Modifying Status Mappings
+
+Status mappings are defined in `jiraCommon.js`:
+
+```javascript
+jiraCommon.COMPLETED_STATUSES = ['Done', 'Closed', 'Resolved'];
+jiraCommon.DROPPED_STATUSES = ['Withdrawn'];
+```
+
+Users can override these in configuration. To add a new default status:
+
+```javascript
+jiraCommon.COMPLETED_STATUSES = ['Done', 'Closed', 'Resolved', 'Finished'];
+```
+
+### Adding New Jira Fields
+
+To sync additional Jira fields:
+
+1. Add the field to the fetch request:
+   ```javascript
+   jiraCommon.JIRA_FIELDS = ['summary', 'description', 'status', 'duedate', 'updated', 'parent', 'priority'];
+   ```
+2. Access the field in task creation/update:
+   ```javascript
+   const priority = fields.priority ? fields.priority.name : 'None';
+   // Use the priority value...
+   ```
+
+## Architecture Decisions
+
+### Why IIFE Pattern?
+
+OmniFocus requires each action file to return a `PlugIn.Action` object. The IIFE pattern:
+- Avoids polluting the global scope
+- Allows local variables and functions
+- Returns the action object to OmniFocus
+
+### Why Shared Library?
+
+`jiraCommon.js` is a shared library used by all actions:
+- Avoids code duplication
+- Provides consistent behavior across actions
+- Simplifies maintenance
+
+### Why Task Prefix?
+
+Using `[JIRA-KEY]` prefix for task identification:
+- Simple and reliable
+- Visible to users (helps identify synced tasks)
+- Works with OmniFocus search and filtering
+- No need for hidden metadata or custom fields
+
+### Why Incremental Sync?
+
+Default incremental sync improves performance:
+- Reduces API calls to Jira
+- Faster sync times
+- Lower risk of rate limiting
+- Sufficient for daily use
+
+Full sync is available for cleanup and troubleshooting.
+
+### Why Read-Only?
+
+The plugin never modifies Jira:
+- Simpler implementation
+- Lower risk of data loss
+- Easier permission management
+- Jira remains the single source of truth
+
+Bi-directional sync would require:
+- More complex conflict resolution
+- Higher permissions in Jira
+- Risk of accidental issue modifications
+
+## Resources
+
+### OmniFocus Documentation
+- [Omni Automation Documentation](https://omni-automation.com/)
+- [OmniFocus Plug-In Guide](https://omni-automation.com/omnifocus/plug-in/)
+
+### Jira API Documentation
+- [Jira REST API v3](https://developer.atlassian.com/cloud/jira/platform/rest/v3/)
+- [JQL (Jira Query Language)](https://www.atlassian.com/software/jira/guides/jql)
+- [Atlassian Document Format](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/)
+
+### Development Tools
+- [ESLint](https://eslint.org/)
+- [Console.app](https://support.apple.com/guide/console/welcome/mac)
+- [Keychain Access](https://support.apple.com/guide/keychain-access/welcome/mac)
+
+## Next Steps
+
+For information on contributing code, see the [Contributing Guidelines](/contributing).

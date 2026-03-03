@@ -1,0 +1,566 @@
+---
+title: Custom Status Mappings
+description: Configure how Jira statuses map to OmniFocus task states
+---
+
+Status mappings control how Jira issue statuses are translated into OmniFocus task states. The plugin provides sensible defaults but allows full customization to match your workflow.
+
+## Default Status Mappings
+
+Out of the box, the plugin uses these mappings:
+
+<Tabs>
+  <Tab title="Completed">
+    **Jira Statuses:** `Done`, `Closed`, `Resolved`
+    
+    **OmniFocus State:** Completed (checkmark)
+    
+    Tasks with these statuses are marked as complete in OmniFocus.
+  </Tab>
+  <Tab title="Dropped">
+    **Jira Status:** `Withdrawn`
+    
+    **OmniFocus State:** Dropped (gray)
+    
+    Tasks with this status are marked as dropped (canceled) in OmniFocus.
+  </Tab>
+  <Tab title="Active">
+    **Jira Statuses:** Everything else
+    
+    **OmniFocus State:** Active (incomplete)
+    
+    All other statuses keep tasks active and incomplete.
+  </Tab>
+</Tabs>
+
+### Default Constants
+
+From the source code at `jiraCommon.js:8-9`:
+
+```javascript
+jiraCommon.COMPLETED_STATUSES = ['Done', 'Closed', 'Resolved'];
+jiraCommon.DROPPED_STATUSES = ['Withdrawn'];
+```
+
+<Info>
+These defaults work well for most Jira instances, which typically use "Done", "Closed", or "Resolved" for completed work.
+</Info>
+
+## How Status Mapping Works
+
+### During Sync
+
+For each Jira issue, the plugin:
+
+1. Reads the current status name (e.g., "Done", "In Progress")
+2. Checks if the status is in the completed statuses list
+3. Checks if the status is in the dropped statuses list
+4. Applies the appropriate OmniFocus task state
+5. Reopens tasks if their status changes from completed to active
+
+### Status Transition Logic
+
+From `jiraCommon.js:762-778`:
+
+```javascript
+const statusName = fields.status.name;
+const statusMappings = jiraCommon.getStatusMappings(settings);
+const shouldBeCompleted = statusMappings.completed.includes(statusName);
+const shouldBeDropped = statusMappings.dropped.includes(statusName);
+
+if (shouldBeCompleted && task.taskStatus !== Task.Status.Completed) {
+  task.markComplete();
+  updated = true;
+} else if (shouldBeDropped && task.taskStatus !== Task.Status.Dropped) {
+  task.drop(true);
+  updated = true;
+} else if (!shouldBeCompleted && !shouldBeDropped) {
+  if (task.taskStatus === Task.Status.Completed || task.taskStatus === Task.Status.Dropped) {
+    task.markIncomplete();
+    updated = true;
+  }
+}
+```
+
+### Reopening Tasks
+
+If a Jira issue changes from a completed/dropped status back to an active status:
+
+```
+Jira: Done → In Progress
+OmniFocus: Completed → Active (incomplete)
+```
+
+The task is automatically reopened and marked as incomplete.
+
+<Note>
+Reopened tasks appear in the **Reopened** count in sync statistics.
+</Note>
+
+## Customizing Status Mappings
+
+You can override the default mappings in **Configure JIRA Sync**.
+
+### Completed Statuses
+
+**Field:** Completed Statuses (comma-separated)
+
+**Example:** `Done, Closed, Resolved, Finished, Complete`
+
+Add any Jira status names that should mark tasks as completed in OmniFocus.
+
+### Dropped Statuses
+
+**Field:** Dropped Statuses (comma-separated)
+
+**Example:** `Withdrawn, Canceled, Cancelled, Won't Do, Rejected`
+
+Add any Jira status names that should mark tasks as dropped in OmniFocus.
+
+<Warning>
+Status names are **case-sensitive**. "Done" and "done" are different values.
+</Warning>
+
+## Common Workflow Examples
+
+### Standard Scrum Workflow
+
+**Jira Statuses:**
+- To Do
+- In Progress
+- In Review
+- Done
+
+**Configuration:**
+- **Completed Statuses:** `Done`
+- **Dropped Statuses:** (leave empty)
+
+**Result:**
+- "Done" issues → Completed in OmniFocus
+- All other statuses → Active in OmniFocus
+
+### Extended Completion States
+
+**Jira Statuses:**
+- To Do
+- In Progress
+- Done
+- Closed
+- Resolved
+- Deployed
+
+**Configuration:**
+- **Completed Statuses:** `Done, Closed, Resolved, Deployed`
+- **Dropped Statuses:** (leave empty)
+
+**Result:**
+- Issues in "Done", "Closed", "Resolved", or "Deployed" → Completed
+- Issues in "To Do" or "In Progress" → Active
+
+### Kanban with Won't Do
+
+**Jira Statuses:**
+- Backlog
+- Selected
+- In Progress
+- Done
+- Won't Do
+
+**Configuration:**
+- **Completed Statuses:** `Done`
+- **Dropped Statuses:** `Won't Do`
+
+**Result:**
+- "Done" → Completed
+- "Won't Do" → Dropped (grayed out)
+- All others → Active
+
+### Support Ticket Workflow
+
+**Jira Statuses:**
+- New
+- Assigned
+- In Progress
+- Waiting for Customer
+- Resolved
+- Closed
+- Canceled
+
+**Configuration:**
+- **Completed Statuses:** `Resolved, Closed`
+- **Dropped Statuses:** `Canceled`
+
+**Result:**
+- "Resolved" or "Closed" → Completed
+- "Canceled" → Dropped
+- "New", "Assigned", "In Progress", "Waiting for Customer" → Active
+
+## Status Mapping Validation
+
+The plugin validates your status mappings:
+
+### Settings Override
+
+From `jiraCommon.js:226-235`:
+
+```javascript
+jiraCommon.getStatusMappings = (settings) => {
+  const completed = (settings && Array.isArray(settings.completedStatuses) && settings.completedStatuses.length > 0)
+    ? settings.completedStatuses
+    : jiraCommon.COMPLETED_STATUSES;
+  const dropped = (settings && Array.isArray(settings.droppedStatuses) && settings.droppedStatuses.length > 0)
+    ? settings.droppedStatuses
+    : jiraCommon.DROPPED_STATUSES;
+  return { completed, dropped };
+};
+```
+
+<Info>
+If you leave the status mapping fields empty, the plugin falls back to the default constants.
+</Info>
+
+### Parsing Logic
+
+The configuration form parses comma-separated values:
+
+```javascript
+const completedStatuses = completedStatusesInput
+  .split(',')
+  .map(s => s.trim())
+  .filter(s => s.length > 0);
+
+const droppedStatuses = droppedStatusesInput
+  .split(',')
+  .map(s => s.trim())
+  .filter(s => s.length > 0);
+```
+
+**Examples:**
+
+<CodeGroup>
+
+```text Input
+Done, Closed,  Resolved  , Finished
+```
+
+```javascript Parsed Array
+['Done', 'Closed', 'Resolved', 'Finished']
+```
+
+</CodeGroup>
+
+## Case Sensitivity
+
+Jira status names are case-sensitive:
+
+<Tabs>
+  <Tab title="Correct">
+    **Configuration:** `Done, Closed, Resolved`
+    
+    **Jira Status:** `Done`
+    
+    **Result:** ✓ Task marked as completed
+  </Tab>
+  <Tab title="Incorrect">
+    **Configuration:** `done, closed, resolved`
+    
+    **Jira Status:** `Done`
+    
+    **Result:** ✗ Task remains active (case mismatch)
+  </Tab>
+</Tabs>
+
+### Finding Exact Status Names
+
+To find the exact status names used in your Jira instance:
+
+<Steps>
+  <Step title="Open a Jira Issue">
+    Navigate to any issue in your Jira instance
+  </Step>
+  <Step title="Check the Status Field">
+    Look at the current status (e.g., "In Progress")
+  </Step>
+  <Step title="Click Status to View Workflow">
+    Click the status to see all available statuses in the workflow
+  </Step>
+  <Step title="Copy Exact Names">
+    Copy the exact status names including capitalization
+  </Step>
+  <Step title="Add to Configuration">
+    Paste into the status mapping fields in **Configure JIRA Sync**
+  </Step>
+</Steps>
+
+## Skip Creation Logic
+
+The plugin has special logic to avoid creating tasks for already-completed issues:
+
+From `syncJira.js:40-41` and `syncJiraFull.js:40-41`:
+
+```javascript
+const shouldSkipCreation = statusMappings.completed.includes(statusName) || statusMappings.dropped.includes(statusName);
+```
+
+If a Jira issue is already in a completed or dropped status during sync:
+- **Existing task**: Updated and marked completed/dropped
+- **No existing task**: Task creation is skipped
+
+<Info>
+This prevents cluttering your OmniFocus with hundreds of already-completed tasks when you first configure the plugin.
+</Info>
+
+### Sync Statistics
+
+Skipped issues appear in the **Skipped** count:
+
+```
+Sync completed successfully!
+
+Created: 5
+Updated: 12
+Reopened: 2
+Completed: 3
+Skipped: 7
+```
+
+The 7 skipped issues were in a completed or dropped state and didn't have existing tasks.
+
+## Advanced Status Mapping Scenarios
+
+### Multiple "In Progress" Statuses
+
+**Scenario:** Your workflow has multiple active states.
+
+**Jira Statuses:**
+- To Do
+- In Development
+- In Review
+- In QA
+- Done
+
+**Configuration:**
+- **Completed Statuses:** `Done`
+- **Dropped Statuses:** (empty)
+
+**Result:**
+- All "In ..." statuses keep tasks active
+- Only "Done" marks tasks as completed
+
+<Note>
+You don't need to explicitly list active statuses. Anything not in the completed or dropped lists is automatically active.
+</Note>
+
+### Regional Variations
+
+**Scenario:** Your Jira instance uses non-English status names.
+
+**Jira Statuses:**
+- À faire
+- En cours
+- Terminé
+- Annulé
+
+**Configuration:**
+- **Completed Statuses:** `Terminé`
+- **Dropped Statuses:** `Annulé`
+
+**Result:**
+- "Terminé" → Completed
+- "Annulé" → Dropped
+- "À faire", "En cours" → Active
+
+### Custom Workflow States
+
+**Scenario:** You have custom statuses like "Blocked" or "Waiting".
+
+**Jira Statuses:**
+- To Do
+- In Progress
+- Blocked
+- Waiting
+- Done
+- Won't Fix
+
+**Configuration:**
+- **Completed Statuses:** `Done`
+- **Dropped Statuses:** `Won't Fix`
+
+**Result:**
+- "Blocked" and "Waiting" remain active (not completed or dropped)
+- OmniFocus doesn't distinguish between "In Progress" and "Blocked" - both are active
+- Consider using tags or task names to indicate blocking in OmniFocus
+
+## Status Changes Over Time
+
+### Timeline Example
+
+<Steps>
+  <Step title="Issue Created">
+    **Jira Status:** To Do
+    
+    **OmniFocus:** Task created, active
+  </Step>
+  <Step title="Work Begins">
+    **Jira Status:** In Progress
+    
+    **OmniFocus:** Task updated, remains active
+  </Step>
+  <Step title="Work Completed">
+    **Jira Status:** Done
+    
+    **OmniFocus:** Task marked as completed
+    
+    **Sync Stat:** Completed +1
+  </Step>
+  <Step title="Issue Reopened">
+    **Jira Status:** To Do
+    
+    **OmniFocus:** Task marked as incomplete (reopened)
+    
+    **Sync Stat:** Reopened +1
+  </Step>
+  <Step title="Canceled">
+    **Jira Status:** Won't Fix
+    
+    **OmniFocus:** Task marked as dropped
+    
+    **Sync Stat:** Updated +1
+  </Step>
+</Steps>
+
+## Best Practices
+
+<Tabs>
+  <Tab title="Match Your Workflow">
+    Configure status mappings to match how your team uses Jira:
+    
+    - Identify which statuses mean "work is done"
+    - Identify which statuses mean "work is canceled"
+    - List all variations (Done, Closed, Resolved, etc.)
+  </Tab>
+  <Tab title="Use Exact Names">
+    Always use the exact status names from Jira:
+    
+    ✓ Good: `Done, Closed, Resolved`
+    
+    ✗ Bad: `done, CLOSED, resolved`
+  </Tab>
+  <Tab title="Test After Changes">
+    After modifying status mappings:
+    
+    1. Save the configuration
+    2. Run a Full Sync
+    3. Check that tasks have the correct states
+    4. Review sync statistics
+  </Tab>
+  <Tab title="Keep It Simple">
+    Don't overcomplicate mappings:
+    
+    - Most workflows need 1-3 completed statuses
+    - Most workflows need 0-2 dropped statuses
+    - Everything else is active by default
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+### Tasks Not Completing
+
+**Issue:** Jira issues are "Done" but OmniFocus tasks remain active.
+
+**Solutions:**
+1. Verify "Done" is in the **Completed Statuses** list
+2. Check case sensitivity ("Done" vs "done")
+3. Run a Full Sync to reprocess all tasks
+4. Check Console.app for status mapping logs
+
+### Tasks Completing Unexpectedly
+
+**Issue:** Tasks marked as completed when they shouldn't be.
+
+**Solutions:**
+1. Review your **Completed Statuses** list
+2. Remove any status names that should be active
+3. Common issue: Including "In Progress" or "Pending" by mistake
+4. Run a Full Sync to fix task states
+
+### Dropped Status Not Working
+
+**Issue:** "Won't Do" issues aren't being dropped in OmniFocus.
+
+**Solutions:**
+1. Add "Won't Do" to **Dropped Statuses** field
+2. Verify exact status name (case-sensitive)
+3. Save configuration and run a Full Sync
+4. Check that status exists in your Jira workflow
+
+### Status Mapping Changes Not Applied
+
+**Issue:** Changed status mappings but tasks still use old behavior.
+
+**Solution:**
+1. After changing mappings, always run a **Full Sync**
+2. Incremental sync only updates recently modified issues
+3. Full sync reprocesses all tasks with new mappings
+
+## Implementation Reference
+
+### Status Check During Sync
+
+Both incremental and full sync use the same status checking logic:
+
+```javascript
+// From syncJira.js:40 and syncJiraFull.js:40
+const statusMappings = lib.getStatusMappings(settings);
+const shouldSkipCreation = statusMappings.completed.includes(statusName) || statusMappings.dropped.includes(statusName);
+```
+
+### Task Creation Skip
+
+```javascript
+// From syncJira.js:63-68 and syncJiraFull.js:63-68
+if (!shouldSkipCreation) {
+  lib.createTaskFromJiraIssue(issue, jiraUrl, tagName, settings, projectIndex, taskIndex);
+  stats.created++;
+} else {
+  stats.skipped++;
+}
+```
+
+### Task Update with Status Change
+
+```javascript
+// From jiraCommon.js:767-778
+if (shouldBeCompleted && task.taskStatus !== Task.Status.Completed) {
+  task.markComplete();
+  updated = true;
+} else if (shouldBeDropped && task.taskStatus !== Task.Status.Dropped) {
+  task.drop(true);
+  updated = true;
+} else if (!shouldBeCompleted && !shouldBeDropped) {
+  if (task.taskStatus === Task.Status.Completed || task.taskStatus === Task.Status.Dropped) {
+    task.markIncomplete();
+    updated = true;
+  }
+}
+```
+
+## Status Mapping in Task Notes
+
+The current Jira status is always included in task notes:
+
+```markdown
+---
+URL: https://yourcompany.atlassian.net/browse/PROJ-123
+Status: In Progress
+---
+
+[Issue description here]
+```
+
+This allows you to see the raw Jira status even if the OmniFocus task state is different.
+
+<Info>
+The status in notes is informational only. The actual OmniFocus task state is determined by your status mappings.
+</Info>

@@ -1,0 +1,240 @@
+---
+title: Sync Modes
+description: Understanding incremental and full sync modes for OmniFocus Jira Sync
+---
+
+The plugin provides two sync modes to keep your OmniFocus tasks in sync with Jira issues. Each mode serves a different purpose and is optimized for specific use cases.
+
+## Incremental Sync
+
+**Run: Automation → Jira Sync → Sync Jira**
+
+Incremental sync is the faster, recommended mode for regular daily use. It fetches only issues that have been modified since your last sync.
+
+### How It Works
+
+The plugin automatically appends a time filter to your JQL query using the `lastSyncTime` timestamp:
+
+```jql
+(your-jql-query) AND updated >= "YYYY-MM-DD HH:MM"
+```
+
+For example, if your configured JQL query is:
+
+```jql
+assignee = currentUser() AND resolution = Unresolved
+```
+
+And your last sync was on 2024-03-15 at 09:30, the actual query executed will be:
+
+```jql
+(assignee = currentUser() AND resolution = Unresolved) AND updated >= "2024-03-15 09:30"
+```
+
+<Info>
+The `lastSyncTime` timestamp is automatically updated after each successful sync and stored in OmniFocus preferences.
+</Info>
+
+### What Gets Synced
+
+During an incremental sync, the plugin:
+
+- **Creates** new tasks for Jira issues that don't exist in OmniFocus
+- **Updates** existing tasks if the issue summary, description, due date, or status has changed
+- **Reopens** completed/dropped tasks if their Jira status changes back to active
+- **Completes** tasks if their Jira status changes to a completed status (Done, Closed, Resolved)
+- **Skips** issues that are already completed or dropped (won't create new tasks)
+
+### Sync Statistics
+
+After each incremental sync, you'll see statistics:
+
+```
+Sync completed successfully!
+
+Created: 5
+Updated: 12
+Reopened: 2
+Completed: 3
+Skipped: 1
+```
+
+<Tabs>
+  <Tab title="Created">
+    New OmniFocus tasks created from Jira issues that didn't exist before.
+  </Tab>
+  <Tab title="Updated">
+    Existing tasks that were modified (name, description, due date, or notes changed).
+  </Tab>
+  <Tab title="Reopened">
+    Previously completed or dropped tasks that became active again in Jira.
+  </Tab>
+  <Tab title="Completed">
+    Tasks marked as completed because their Jira status changed to Done, Closed, or Resolved.
+  </Tab>
+  <Tab title="Skipped">
+    Issues that are already in a completed or dropped state and weren't created as new tasks.
+  </Tab>
+</Tabs>
+
+### When to Use Incremental Sync
+
+- **Daily workflow**: Run this at the start of your day or throughout the day
+- **Quick updates**: When you want to fetch recent changes without processing all issues
+- **Performance**: Faster than full sync, especially with large issue counts
+- **Bandwidth**: Minimizes API requests and data transfer
+
+<Note>
+Incremental sync does **not** detect when issues are moved out of your JQL query scope or deleted. Use Full Sync for cleanup.
+</Note>
+
+## Full Refresh Sync
+
+**Run: Automation → Jira Sync → Sync Jira Full**
+
+Full sync fetches all issues matching your JQL query and cleans up orphaned tasks in OmniFocus.
+
+### How It Works
+
+The plugin executes your JQL query without time filtering:
+
+```jql
+your-jql-query
+```
+
+It then:
+
+1. Fetches **all** issues matching the query (with pagination)
+2. Processes each issue like incremental sync
+3. **Additionally**: Marks orphaned tasks as completed
+
+### Orphaned Task Cleanup
+
+After processing all Jira issues, full sync performs cleanup by:
+
+1. Getting all existing OmniFocus tasks with your configured tag
+2. Extracting the Jira key from each task name (e.g., `[PROJ-123]`)
+3. Comparing against the set of issue keys returned by Jira
+4. Marking any task as completed if its Jira issue:
+   - No longer matches your JQL query
+   - Was deleted or moved to a different project
+   - Is no longer assigned to you (or whatever your query filters)
+
+<Warning>
+Orphaned tasks are marked as **completed**, not deleted. This preserves your task history and completion records.
+</Warning>
+
+### Implementation Details
+
+From the source code at `syncJiraFull.js:71-100`:
+
+```javascript
+// Full refresh: complete tasks no longer in Jira
+const tag = tagNamed(tagName);
+const existingTasks = tag ? tag.tasks : [];
+const issueKeysFromJira = new Set(issues.map(i => i.key));
+
+for (const task of existingTasks) {
+  const match = task.name.match(/^\[([^\]]+)\]/);
+  if (match) {
+    const taskJiraKey = match[1];
+    
+    if (!issueKeysFromJira.has(taskJiraKey) &&
+        task.taskStatus !== Task.Status.Completed &&
+        task.taskStatus !== Task.Status.Dropped) {
+      task.markComplete();
+      stats.completed++;
+    }
+  }
+}
+```
+
+### When to Use Full Sync
+
+- **Weekly maintenance**: Run once a week to clean up stale tasks
+- **After query changes**: When you modify your JQL query in configuration
+- **Troubleshooting**: If you suspect tasks are out of sync
+- **Project transitions**: When issues move between projects or teams
+- **Bulk cleanup**: After archiving or closing multiple Jira issues
+
+### Performance Considerations
+
+Full sync takes longer than incremental sync because:
+
+- It fetches all matching issues (potentially hundreds or thousands)
+- Jira API pagination processes 100 issues per request
+- It scans all existing tasks for orphaned entries
+
+<Accordion title="Example: Full sync with 500 issues">
+  - **API Requests**: 5 requests (500 ÷ 100 per page)
+  - **Processing Time**: ~10-30 seconds depending on network speed
+  - **Issues Fetched**: All 500 issues, regardless of update time
+  - **Cleanup**: Scans all existing tasks with your configured tag
+</Accordion>
+
+## Choosing the Right Sync Mode
+
+| Scenario | Recommended Mode |
+|----------|------------------|
+| Daily morning sync | Incremental |
+| Quick update during the day | Incremental |
+| Changed JQL query | Full |
+| Issues moved out of scope | Full |
+| Weekly maintenance | Full |
+| Troubleshooting sync issues | Full |
+| After bulk Jira changes | Full |
+| Performance-critical | Incremental |
+
+## Best Practices
+
+<Tabs>
+  <Tab title="Daily Workflow">
+    1. Run **Incremental Sync** at the start of your workday
+    2. Run **Incremental Sync** periodically throughout the day for quick updates
+    3. Schedule **Full Sync** once per week (e.g., Monday mornings)
+  </Tab>
+  <Tab title="After Config Changes">
+    1. Modify your JQL query in **Configure JIRA Sync**
+    2. Run **Full Sync** to apply the new query and clean up old tasks
+    3. Resume normal incremental sync workflow
+  </Tab>
+  <Tab title="Troubleshooting">
+    1. If tasks seem out of sync, run **Full Sync**
+    2. Check the sync statistics to see what was updated
+    3. Review the Console.app logs (filter for "OmniFocus") for detailed information
+  </Tab>
+</Tabs>
+
+## Technical Details
+
+### Pagination
+
+Both sync modes use pagination to handle large result sets:
+
+- **Max results per page**: 100 issues (defined in `jiraCommon.js:11`)
+- **Pagination method**: Token-based using Jira's `nextPageToken`
+- **Automatic**: The plugin loops through all pages automatically
+
+### Sync Timestamp
+
+The `lastSyncTime` timestamp is:
+
+- Stored in OmniFocus Preferences API under `jiraSync.settings`
+- Updated after each successful sync (both modes)
+- Formatted as ISO 8601: `YYYY-MM-DDTHH:MM:SS.sssZ`
+- Converted to Jira's expected format for JQL: `YYYY-MM-DD HH:MM`
+
+### Performance Optimization
+
+Both sync modes use O(1) index lookups instead of O(n) linear scans:
+
+```javascript
+// Build indexes for fast lookups
+const taskIndex = lib.buildTaskIndex();
+const projectIndex = settings.enableProjectOrganization ? lib.buildProjectIndex() : null;
+
+// O(1) lookup instead of scanning all tasks
+const existingTask = lib.findTaskByJiraKeyIndexed(taskIndex, jiraKey);
+```
+
+This optimization significantly improves performance when syncing hundreds or thousands of issues.

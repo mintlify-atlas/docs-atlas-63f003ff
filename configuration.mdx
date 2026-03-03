@@ -1,0 +1,256 @@
+---
+title: Configuration
+description: Configure your Jira credentials, JQL query, and sync preferences
+---
+
+# Configuration
+
+Before you can sync Jira issues to OmniFocus, you need to configure the plugin with your Jira credentials and preferences.
+
+## Initial configuration
+
+<Steps>
+  <Step title="Open configuration">
+    In OmniFocus, navigate to **Automation → Plug-Ins → Jira Sync** and run **Configure JIRA Sync** (the gear icon).
+  </Step>
+  
+  <Step title="Enter Jira URL">
+    Enter your Atlassian instance URL in the **JIRA URL** field.
+    
+    ```
+    https://yourcompany.atlassian.net
+    ```
+    
+    <Warning>
+      The URL must start with `https://` for security. Do not include trailing slashes.
+    </Warning>
+  </Step>
+  
+  <Step title="Generate API token">
+    Create a Jira API token:
+    1. Visit [https://id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+    2. Click **Create API token**
+    3. Give it a label like "OmniFocus Sync"
+    4. Copy the generated token
+    
+    <Info>
+      API tokens are more secure than passwords and can be revoked independently if needed.
+    </Info>
+  </Step>
+  
+  <Step title="Enter credentials">
+    Fill in your Jira credentials:
+    - **JIRA Account ID**: Your Jira account email or ID
+    - **JIRA API Token**: Paste the token you generated
+    
+    <Note>
+      Credentials are stored securely in macOS Keychain via OmniFocus's Credentials API.
+    </Note>
+  </Step>
+  
+  <Step title="Configure JQL query">
+    Enter a JQL query to filter which issues to sync. For example:
+    
+    ```jql
+    assignee = currentUser() AND resolution = Unresolved
+    ```
+    
+    This syncs all your open, unresolved issues. See [JQL queries](/usage/jql-queries) for more examples.
+  </Step>
+  
+  <Step title="Set OmniFocus tag">
+    Enter a tag name to apply to all synced tasks:
+    
+    ```
+    Work:JIRA
+    ```
+    
+    <Info>
+      Use colons to create nested tags (e.g., `Work:JIRA` creates a "JIRA" tag under "Work").
+    </Info>
+  </Step>
+  
+  <Step title="Test connection">
+    Click **Save**. The plugin will test your connection and display:
+    - Your authenticated user name
+    - The number of issues found matching your JQL query
+    
+    If successful, your configuration is saved.
+  </Step>
+</Steps>
+
+## Configuration fields
+
+The configuration form includes these fields:
+
+### Required fields
+
+<ParamField path="jiraUrl" type="string" required>
+  Your Jira instance URL. Must start with `https://`.
+  
+  **Example**: `https://yourcompany.atlassian.net`
+</ParamField>
+
+<ParamField path="accountId" type="string" required>
+  Your Jira account ID or email address.
+  
+  **Example**: `user@company.com`
+</ParamField>
+
+<ParamField path="apiToken" type="password" required>
+  Your Jira API token generated from Atlassian's security settings.
+</ParamField>
+
+<ParamField path="jqlQuery" type="string" required>
+  JQL query to filter which issues to sync.
+  
+  **Example**: `assignee = currentUser() AND resolution = Unresolved`
+</ParamField>
+
+<ParamField path="tagName" type="string" required>
+  Tag name to apply to synced tasks. Use colons for nested tags.
+  
+  **Example**: `Work:JIRA`
+</ParamField>
+
+### Optional fields
+
+<ParamField path="enableProjectOrganization" type="boolean" default="false">
+  When enabled, tasks with Jira parent issues (epics) are grouped into OmniFocus projects named `[PARENT-KEY] Parent Summary`.
+</ParamField>
+
+<ParamField path="defaultProjectFolder" type="string">
+  Default folder path for created projects when project organization is enabled. Use colon-separated paths for nested folders.
+  
+  **Example**: `Work:Jira:Epics`
+  
+  Leave empty to create projects at the root level.
+</ParamField>
+
+<ParamField path="completedStatuses" type="string">
+  Comma-separated list of Jira status names that mark tasks as completed.
+  
+  **Default**: `Done, Closed, Resolved`
+  
+  **Example**: `Done, Closed, Resolved, Finished`
+</ParamField>
+
+<ParamField path="droppedStatuses" type="string">
+  Comma-separated list of Jira status names that mark tasks as dropped.
+  
+  **Default**: `Withdrawn`
+  
+  **Example**: `Withdrawn, Cancelled`
+</ParamField>
+
+## Advanced configuration
+
+### Project organization
+
+Enable **Project Organization** to automatically group tasks by their Jira parent issue:
+
+1. Check the **Enable Project Organization** checkbox
+2. Optionally set a **Default Folder for Projects** using colon-separated paths
+3. Click **Save**
+
+When enabled:
+- Tasks with a parent issue are placed in an OmniFocus project named `[PARENT-KEY] Parent Summary`
+- Projects are created in the specified folder path (or at root level if empty)
+- Tasks without parent issues remain in your inbox
+
+<Info>
+  This feature is useful for organizing tasks by epic or parent story in Jira.
+</Info>
+
+### Custom status mappings
+
+You can customize how Jira statuses map to OmniFocus task states:
+
+**Completed statuses** (default: `Done, Closed, Resolved`):
+```
+Done, Closed, Resolved, Finished
+```
+
+**Dropped statuses** (default: `Withdrawn`):
+```
+Withdrawn, Cancelled
+```
+
+<Note>
+  Status names are case-sensitive and must match exactly as they appear in Jira.
+</Note>
+
+## Data storage
+
+The plugin stores configuration data in two secure locations:
+
+### Credentials (macOS Keychain)
+
+Stored under `com.omnifocus.plugin.jira-sync`:
+- Jira account ID
+- Jira API token
+
+### Settings (OmniFocus Preferences)
+
+Stored in OmniFocus preferences under `jiraSync.settings`:
+- Jira URL
+- JQL query
+- Tag name
+- Project organization settings
+- Status mappings
+- Last sync timestamp
+
+<Warning>
+  No data is sent anywhere except to your configured Jira instance. The plugin is read-only and never modifies Jira issues.
+</Warning>
+
+## Updating configuration
+
+You can update your configuration at any time:
+
+1. Run **Configure JIRA Sync** again from **Automation → Plug-Ins → Jira Sync**
+2. Modify any fields you want to change
+3. Click **Save**
+
+The plugin will test the connection again and save your updated settings.
+
+<Info>
+  Changing the JQL query will affect which issues are synced in future syncs. Existing tasks in OmniFocus are not automatically deleted.
+</Info>
+
+## Troubleshooting
+
+### Authentication error
+
+If you see an authentication error:
+
+1. Verify your Jira URL is correct and includes `https://`
+2. Regenerate your API token at [https://id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+3. Run **Configure JIRA Sync** again with the new token
+
+### Invalid JQL query
+
+If your JQL query fails:
+
+1. Test the query in Jira's issue search (**Filters → Advanced issue search**)
+2. Verify it returns the expected issues
+3. Update the query in the configuration
+
+### No issues found
+
+If the connection test reports 0 issues:
+
+1. Your JQL query might be too restrictive
+2. Test the query directly in Jira to see what it returns
+3. Try a simpler query like `assignee = currentUser()`
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Learn JQL queries" icon="search" href="/usage/jql-queries">
+    Discover JQL patterns to filter issues effectively
+  </Card>
+  <Card title="Start syncing" icon="sync" href="/usage/sync-modes">
+    Run your first sync and understand incremental vs. full refresh
+  </Card>
+</CardGroup>

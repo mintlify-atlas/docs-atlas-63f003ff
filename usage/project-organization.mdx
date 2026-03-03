@@ -1,0 +1,474 @@
+---
+title: Project Organization
+description: Automatically organize OmniFocus tasks into projects based on Jira parent issues and epics
+---
+
+Project Organization is an optional feature that automatically groups your synced tasks into OmniFocus projects based on their Jira parent issues (typically epics).
+
+## Overview
+
+When enabled, the plugin:
+
+1. Detects if a Jira issue has a parent (epic or parent task)
+2. Creates or finds an OmniFocus project named after the parent issue
+3. Places the task inside that project
+4. Optionally organizes projects into a folder structure
+
+<Note>
+This feature is **disabled by default**. Enable it in **Configure JIRA Sync** → **Project Organization**.
+</Note>
+
+## How It Works
+
+### Parent Issue Detection
+
+The plugin fetches the `parent` field from Jira issues:
+
+```javascript
+// From jiraCommon.js:12 - Fields fetched from Jira
+jiraCommon.JIRA_FIELDS = ['summary', 'description', 'status', 'duedate', 'updated', 'parent'];
+```
+
+If an issue has a parent:
+- **Parent key**: `PROJ-123`
+- **Parent summary**: "Mobile App Redesign"
+
+The plugin creates a project: `[PROJ-123] Mobile App Redesign`
+
+### Project Creation
+
+Projects are created automatically when needed:
+
+<Steps>
+  <Step title="Check for Existing Project">
+    The plugin searches for a project with the prefix `[PARENT-KEY]`
+  </Step>
+  <Step title="Create if Not Found">
+    If no project exists, a new one is created with the name `[PARENT-KEY] Parent Summary`
+  </Step>
+  <Step title="Place in Folder">
+    If a default folder is configured, the project is created inside that folder
+  </Step>
+  <Step title="Apply Tag">
+    The project is tagged with your configured tag name
+  </Step>
+  <Step title="Add Task">
+    The task is created inside the project
+  </Step>
+</Steps>
+
+### Project Naming Convention
+
+Projects follow this naming pattern:
+
+```
+[JIRA-PARENT-KEY] Parent Issue Summary
+```
+
+**Examples:**
+- `[PROJ-123] Mobile App Redesign`
+- `[ENG-456] Q2 Infrastructure Improvements`
+- `[SUPPORT-789] Customer Onboarding Epic`
+
+<Info>
+The Jira key prefix allows the plugin to identify and reuse existing projects across syncs.
+</Info>
+
+## Configuration
+
+Enable and configure Project Organization in **Configure JIRA Sync**:
+
+### Enable Project Organization
+
+Check the **Enable Project Organization** checkbox.
+
+### Default Project Folder (Optional)
+
+Specify a folder path using colon-separated notation:
+
+<Tabs>
+  <Tab title="Root Level">
+    **Leave blank** to create projects at the root level of your OmniFocus database.
+    
+    ```
+    OmniFocus
+    ├── [PROJ-123] Mobile App Redesign
+    ├── [ENG-456] Infrastructure Improvements
+    └── [SUPPORT-789] Customer Onboarding
+    ```
+  </Tab>
+  <Tab title="Single Folder">
+    Enter `Work` to create projects in a top-level "Work" folder.
+    
+    ```
+    OmniFocus
+    └── Work
+        ├── [PROJ-123] Mobile App Redesign
+        ├── [ENG-456] Infrastructure Improvements
+        └── [SUPPORT-789] Customer Onboarding
+    ```
+  </Tab>
+  <Tab title="Nested Folders">
+    Enter `Work:Jira:Epics` to create projects in nested folders.
+    
+    ```
+    OmniFocus
+    └── Work
+        └── Jira
+            └── Epics
+                ├── [PROJ-123] Mobile App Redesign
+                ├── [ENG-456] Infrastructure Improvements
+                └── [SUPPORT-789] Customer Onboarding
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+The folder structure must already exist in OmniFocus. The plugin will not create folders automatically.
+</Warning>
+
+### Folder Path Syntax
+
+Use colons (`:`) to separate folder levels:
+
+```
+Parent:Child:Grandchild
+```
+
+**Example:** `Work:Jira:Projects`
+
+From the source code at `jiraCommon.js:583-608`:
+
+```javascript
+jiraCommon.findNestedFolder = (folderPath) => {
+  const parts = folderPath.split(':').map(p => p.trim());
+  let currentFolder = folderNamed(parts[0]);
+  
+  for (let i = 1; i < parts.length; i++) {
+    const childFolders = currentFolder.folders;
+    const foundChild = childFolders.find(f => f.name === parts[i]);
+    currentFolder = foundChild;
+  }
+  
+  return currentFolder;
+};
+```
+
+## Task Placement Logic
+
+The plugin follows this logic when organizing tasks:
+
+<Accordion title="Task With Parent Issue">
+  1. Check if parent issue exists as an OmniFocus project
+  2. If yes, create task inside that project
+  3. If no, create a new project and place task inside
+  4. Apply configured tag to both project and task
+</Accordion>
+
+<Accordion title="Task Without Parent Issue">
+  1. Create task at the root level (inbox)
+  2. Task is not placed in any project
+  3. Apply configured tag to task
+</Accordion>
+
+<Accordion title="Parent Removed From Jira">
+  1. During sync, detect parent field is now empty
+  2. Attempt to move task to inbox (root level)
+  3. If task cannot be moved (OmniFocus limitation), leave in current project
+  4. Log warning in console
+</Accordion>
+
+## Implementation Details
+
+### Finding Parent Container
+
+The plugin uses indexed lookups for performance:
+
+```javascript
+// From jiraCommon.js:563-580
+jiraCommon.findParentContainer = (taskIndex, projectIndex, parentKey) => {
+  // First check if parent exists as a Task (task group)
+  if (taskIndex) {
+    const parentTask = jiraCommon.findTaskByJiraKeyIndexed(taskIndex, parentKey);
+    if (parentTask) {
+      return parentTask;
+    }
+  }
+  
+  // Then check if parent exists as a Project
+  if (projectIndex) {
+    const parentProject = jiraCommon.findProjectByJiraKeyIndexed(projectIndex, parentKey);
+    if (parentProject) {
+      return parentProject;
+    }
+  }
+  
+  return null;
+};
+```
+
+<Info>
+The plugin prefers existing tasks over projects. If the parent issue exists as both a task and a project, the task takes precedence (creating a task group).
+</Info>
+
+### Project Index
+
+For O(1) lookup performance, the plugin builds an index of all projects:
+
+```javascript
+// From jiraCommon.js:541-550
+jiraCommon.buildProjectIndex = () => {
+  const index = new Map();
+  for (const project of flattenedProjects) {
+    const match = project.name.match(/^\[([^\]]+)\]/);
+    if (match) {
+      index.set(match[1], project);
+    }
+  }
+  return index;
+};
+```
+
+### Creating Projects
+
+From `jiraCommon.js:611-646`:
+
+```javascript
+jiraCommon.findOrCreateProject = (parentKey, parentSummary, tagName, defaultFolder, projectIndex) => {
+  let project = projectIndex
+    ? jiraCommon.findProjectByJiraKeyIndexed(projectIndex, parentKey)
+    : jiraCommon.findProjectByJiraKey(parentKey);
+
+  if (!project) {
+    const projectName = `[${parentKey}] ${parentSummary}`;
+    
+    if (defaultFolder) {
+      const folder = jiraCommon.findNestedFolder(defaultFolder);
+      if (folder) {
+        project = new Project(projectName, folder);
+      } else {
+        project = new Project(projectName); // Fallback to root
+      }
+    } else {
+      project = new Project(projectName);
+    }
+    
+    project.status = Project.Status.Active;
+    const tag = tagNamed(tagName) || new Tag(tagName);
+    project.addTag(tag);
+  }
+  
+  return project;
+};
+```
+
+## OmniFocus Limitations
+
+### Read-Only Project Property
+
+<Warning>
+OmniFocus does not allow moving tasks between projects after creation. The `project` property is read-only.
+</Warning>
+
+From `jiraCommon.js:720-738`:
+
+```javascript
+if (targetProject && currentProject !== targetProject) {
+  try {
+    task.project = targetProject;
+  } catch (e) {
+    console.log(`Cannot move task ${jiraKey} to project ${targetProject.name} (project is read-only after creation)`);
+  }
+}
+```
+
+If a task's parent changes in Jira:
+- The plugin attempts to move the task
+- If the move fails (typical), the task stays in its current project
+- A warning is logged to the console
+
+### Workaround
+
+To move a task to a different project:
+
+1. Manually delete the task in OmniFocus
+2. Run a Full Sync to recreate it in the correct project
+
+Or:
+
+1. Manually move the task in OmniFocus (drag and drop)
+2. The next sync will update the task content but preserve its location
+
+## Use Cases
+
+### Epic-Based Organization
+
+**Scenario:** Your team uses Jira epics to group related work.
+
+**Configuration:**
+- Enable Project Organization: ✓
+- Default Project Folder: `Work:Jira:Epics`
+
+**Result:**
+
+```
+OmniFocus
+└── Work
+    └── Jira
+        └── Epics
+            ├── [ENG-123] Mobile App v2.0
+            │   ├── [ENG-124] Implement authentication
+            │   ├── [ENG-125] Design home screen
+            │   └── [ENG-126] Add push notifications
+            └── [ENG-200] Backend Performance
+                ├── [ENG-201] Optimize database queries
+                └── [ENG-202] Add caching layer
+```
+
+### Mixed Organization
+
+**Scenario:** Some issues have parents (epics), others don't.
+
+**Result:**
+
+```
+OmniFocus
+├── Inbox
+│   ├── [ENG-300] Fix login bug (no parent)
+│   └── [ENG-301] Update documentation (no parent)
+└── Work
+    └── Jira
+        ├── [ENG-123] Mobile App v2.0
+        │   └── [ENG-124] Implement authentication
+        └── [ENG-200] Backend Performance
+            └── [ENG-201] Optimize database queries
+```
+
+Tasks without parents remain in your inbox.
+
+### Multi-Level Hierarchies
+
+**Scenario:** Jira has sub-epics or nested parent-child relationships.
+
+**Limitation:** The plugin only looks at the immediate parent. Multi-level hierarchies are flattened.
+
+**Example in Jira:**
+```
+ENG-100 (Epic)
+└── ENG-200 (Sub-epic)
+    └── ENG-201 (Task)
+```
+
+**Result in OmniFocus:**
+```
+[ENG-200] Sub-epic (Project)
+└── [ENG-201] Task
+```
+
+The plugin creates a project for `ENG-200` and places `ENG-201` inside. The top-level epic `ENG-100` is not referenced.
+
+## Performance Considerations
+
+Project organization adds minimal overhead:
+
+- **Index building**: O(n) where n = number of projects (typically < 100)
+- **Project lookup**: O(1) using Map index
+- **Project creation**: Rare (only when new parents appear)
+- **Folder navigation**: O(d) where d = folder depth (typically 2-3)
+
+The index-based approach ensures fast performance even with hundreds of projects.
+
+## Best Practices
+
+<Tabs>
+  <Tab title="Keep It Simple">
+    Use a shallow folder structure:
+    
+    ✓ Good: `Work:Jira`
+    
+    ✗ Avoid: `Work:Projects:Engineering:Jira:Epics:Active`
+  </Tab>
+  <Tab title="Create Folders First">
+    Before enabling Project Organization:
+    
+    1. Create the folder structure in OmniFocus
+    2. Test the path: `Work:Jira:Epics`
+    3. Enable Project Organization
+    4. Run a Full Sync
+  </Tab>
+  <Tab title="Tag Everything">
+    Use a consistent tag for all Jira-synced items:
+    
+    - Projects get tagged automatically
+    - Tasks get tagged automatically
+    - Easy to filter and search
+  </Tab>
+  <Tab title="Regular Cleanup">
+    Run Full Sync weekly to:
+    
+    - Clean up orphaned projects
+    - Reorganize changed hierarchies
+    - Maintain consistency
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+### Projects Not Created
+
+**Issue:** Tasks are created but not organized into projects.
+
+**Solutions:**
+1. Verify **Enable Project Organization** is checked in configuration
+2. Check that issues have parent fields in Jira
+3. Run a Full Sync to rebuild project structure
+4. Review Console.app logs for errors
+
+### Folder Not Found Error
+
+**Issue:** Console shows "Folder not found, creating project at root level"
+
+**Solutions:**
+1. Create the folder structure manually in OmniFocus
+2. Verify folder path syntax: `Parent:Child:Grandchild`
+3. Check for typos in folder names (case-sensitive)
+4. Leave folder field blank to use root level
+
+### Tasks in Wrong Projects
+
+**Issue:** Tasks appear in incorrect projects after parent changes.
+
+**Cause:** OmniFocus limitation - tasks cannot be moved between projects.
+
+**Solutions:**
+1. Manually delete the task in OmniFocus
+2. Run a Full Sync to recreate it in the correct project
+
+Or:
+
+1. Manually move the task in OmniFocus
+2. Accept the divergence from Jira's structure
+
+### Duplicate Projects
+
+**Issue:** Multiple projects with similar names.
+
+**Cause:** Manual project creation or project names without `[JIRA-KEY]` prefix.
+
+**Solutions:**
+1. Delete duplicate projects manually
+2. Ensure plugin-created projects have `[KEY]` prefix
+3. Run a Full Sync to consolidate
+
+## Disabling Project Organization
+
+To disable this feature:
+
+1. Uncheck **Enable Project Organization** in **Configure JIRA Sync**
+2. Run a Full Sync
+3. New tasks will be created at root level (inbox)
+4. Existing projects and tasks remain unchanged
+
+<Note>
+Disabling Project Organization does not delete existing projects or move existing tasks. It only affects new tasks created after disabling.
+</Note>
