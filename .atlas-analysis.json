@@ -1,0 +1,62 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "OmniFocus Jira Sync",
+  "projectDescription": "One-way sync plugin that imports Jira issues into OmniFocus as tasks using JQL queries",
+  "theme": "palm",
+  "primaryColor": "#0052CC",
+  "lightColor": "#4C9AFF",
+  "darkColor": "#0747A6",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "installation",
+          "configuration"
+        ]
+      },
+      {
+        "group": "Usage",
+        "pages": [
+          "usage/sync-modes",
+          "usage/jql-queries",
+          "usage/project-organization",
+          "usage/status-mappings"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": [
+          "reference/actions",
+          "reference/task-mapping",
+          "reference/settings"
+        ]
+      },
+      {
+        "group": "Resources",
+        "pages": [
+          "troubleshooting",
+          "security",
+          "development",
+          "contributing"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "One-way sync from Jira to OmniFocus",
+    "JQL-based filtering to sync specific issues",
+    "Incremental and full refresh sync modes",
+    "Automatic status mapping to OmniFocus task states",
+    "Project organization based on Jira parent issues",
+    "Secure credential storage in macOS Keychain",
+    "Retry logic with exponential backoff",
+    "Task deduplication based on Jira keys"
+  ],
+  "publicApiSurface": [
+    "Configure JIRA Sync - Setup action for credentials and settings",
+    "Sync Jira - Incremental sync for recent updates",
+    "Sync Jira Full - Full refresh sync with cleanup"
+  ]
+}
